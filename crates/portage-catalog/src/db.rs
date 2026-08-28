@@ -54,6 +54,14 @@ impl Catalog {
     /// or `user_version` is behind this binary — migrate under exclusive first.
     pub fn open(data_dir: impl AsRef<Path>, mode: LockMode) -> Result<Self, Error> {
         let paths = DataPaths::new(data_dir.as_ref());
+
+        // Shared open is read-only: refuse before creating any on-disk side effects.
+        if mode == LockMode::Shared && !paths.catalog().exists() {
+            return Err(Error::Catalog(
+                "catalog.sqlite is missing; open exclusive to create and migrate".into(),
+            ));
+        }
+
         std::fs::create_dir_all(paths.data_dir()).map_err(|source| Error::Io {
             path: paths.data_dir().to_path_buf(),
             source,
@@ -61,13 +69,6 @@ impl Catalog {
 
         let lock = CatalogLock::acquire(&paths.lock_file(), mode)?;
         let catalog_path = paths.catalog();
-        let exists = catalog_path.exists();
-
-        if mode == LockMode::Shared && !exists {
-            return Err(Error::Catalog(
-                "catalog.sqlite is missing; open exclusive to create and migrate".into(),
-            ));
-        }
 
         let conn = Connection::open(&catalog_path).map_err(map_sql)?;
         conn.pragma_update(None, "journal_mode", "WAL")

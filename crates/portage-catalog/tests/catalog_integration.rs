@@ -64,7 +64,7 @@ fn byte_file_gets_proto_blob_and_suspect_replica() {
 }
 
 #[test]
-fn directory_and_placeholder_have_no_replica() {
+fn directory_has_no_replica_placeholder_has_partial_replica() {
     let (_tmp, cat) = exclusive();
     seed(&cat);
     let mut dir = byte_file("Clips", "Clips", 0);
@@ -78,7 +78,10 @@ fn directory_and_placeholder_have_no_replica() {
     ph.hydration = Hydration::Placeholder;
     let inserted = cat.insert_file(&ph).unwrap();
     assert!(inserted.blob.is_some());
-    assert!(inserted.replica.is_none());
+    // Placeholder gets a Partial replica to keep the file↔blob link intact
+    // without counting as a last-copy.
+    let replica = inserted.replica.expect("placeholder should have a Partial replica");
+    assert_eq!(replica.state, ReplicaState::Partial);
 }
 
 #[test]

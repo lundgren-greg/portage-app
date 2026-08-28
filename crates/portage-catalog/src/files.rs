@@ -65,13 +65,14 @@ pub struct InsertedFile {
     pub file: FileRow,
     /// Proto-blob for byte files.
     pub blob: Option<BlobRow>,
-    /// Replica only when the file can count (not a placeholder).
+    /// Replica for the file: `Suspect` for fully-local files, `Partial` for
+    /// placeholders (not a last-copy), `None` for directories and shortcuts.
     pub replica: Option<ReplicaRow>,
 }
 
 impl Catalog {
     /// Insert one file. Byte files get a proto-blob (`content_id` NULL).
-    /// Placeholder byte files get a proto-blob but **no** replica.
+    /// Placeholder byte files get a proto-blob and a `Partial` replica (not last-copy).
     pub fn insert_file(&self, new: &NewFile) -> Result<InsertedFile, Error> {
         let tx = self.conn().unchecked_transaction().map_err(map_sql)?;
         let inserted = insert_file_in(&tx, new)?;
@@ -182,11 +183,14 @@ fn insert_file_in(tx: &rusqlite::Transaction<'_>, new: &NewFile) -> Result<Inser
     let blob = if new.kind == FileKind::Byte {
         match find_blob_by_checksums(tx, &new.checksums)? {
             Some(existing) => Some(existing),
-            None => Some(blobs::insert_proto(
-                tx,
-                new.size.unwrap_or(0),
-                new.mime.as_deref(),
-            )?),
+            None => {
+                let size = new.size.ok_or_else(|| {
+                    portage_core::Error::Invariant(
+                        "byte file must have a size before inserting a proto-blob".into(),
+                    )
+                })?;
+                Some(blobs::insert_proto(tx, size, new.mime.as_deref())?)
+            }
         }
     } else {
         None
@@ -196,7 +200,12 @@ fn insert_file_in(tx: &rusqlite::Transaction<'_>, new: &NewFile) -> Result<Inser
     }
 
     let replica = match (blob.as_ref(), new.hydration) {
-        (Some(_), Hydration::Placeholder) => None,
+        (Some(b), Hydration::Placeholder) => {
+            // Placeholder: the file exists locally as an OS stub (not fully
+            // downloaded). Insert a Partial replica to keep the file↔blob
+            // association intact without counting as a last-copy.
+            Some(replicas::insert(tx, b.id, file_id, ReplicaState::Partial)?)
+        }
         (Some(b), _) => Some(replicas::insert(tx, b.id, file_id, ReplicaState::Suspect)?),
         (None, _) => None,
     };

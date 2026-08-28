@@ -74,7 +74,7 @@ fn byte_file_gets_proto_blob_and_suspect_replica() {
 }
 
 #[test]
-fn placeholder_gets_proto_blob_but_no_replica() {
+fn placeholder_gets_proto_blob_and_partial_replica() {
     let (_dir, cat) = open();
     seed_local(&cat);
     let inserted = cat
@@ -86,7 +86,9 @@ fn placeholder_gets_proto_blob_but_no_replica() {
         ))
         .unwrap();
     assert!(inserted.blob.is_some());
-    assert!(inserted.replica.is_none());
+    // Placeholder links to blob via a Partial replica (not last-copy).
+    let replica = inserted.replica.expect("placeholder should have a Partial replica");
+    assert_eq!(replica.state, ReplicaState::Partial);
 }
 
 #[test]

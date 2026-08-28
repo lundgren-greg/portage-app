@@ -80,6 +80,11 @@ impl CatalogLock {
 
 impl Drop for CatalogLock {
     fn drop(&mut self) {
+        if self.mode == LockMode::Exclusive {
+            // Clear PID so a subsequent shared holder doesn't report a stale
+            // exclusive-owner PID when a new exclusive acquire blocks.
+            let _ = self.file.set_len(0);
+        }
         let _ = self.file.unlock();
     }
 }
