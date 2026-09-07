@@ -1,14 +1,15 @@
 # Roadmap
 
-Implementation is **not started**. Next: **PR 1**.
+PRs 1, 1.5, and 2 are on `main`. **PR 3** is implemented and open as [pull/12](https://github.com/lundgren-greg/portage-app/pull/12) (paused 2026-08-17 before merge). After that: **PR 4**.
 
 Do the numbered PRs in [docs/design.md](https://github.com/lundgren-greg/portage-app/blob/main/docs/design.md). Short map:
 
 | PR | What | Notes |
 |---|---|---|
-| **1** | Workspace + `portage` CLI stub + `init` | Start here |
-| 2 | BLAKE3 ids, paths, dual hasher | |
-| 3 | SQLite catalog + lock | |
+| ~~1~~ | Workspace + `portage` CLI stub + `init` | Merged |
+| ~~1.5~~ | JSONL logs, metrics, coverage gate | Merged |
+| ~~2~~ | BLAKE3 ids, paths, dual hasher | Merged |
+| **3** | SQLite catalog + lock | Open [#12](https://github.com/lundgren-greg/portage-app/pull/12); paused |
 | 4 | Local walk, placeholders, **removable volumes** | USB roles + volume serial |
 | 5 | Incremental hash, `dups` / `search` | Useful on a full disk before any cloud |
 | 6 | OAuth PKCE + DPAPI/keyring | Can overlap after PR 4 |

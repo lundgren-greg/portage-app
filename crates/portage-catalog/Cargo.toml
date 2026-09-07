@@ -4,7 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SQLite catalog for Portage (stub until PR 3)"
+description = "SQLite catalog for Portage: schema, lock, file/blob/replica queries"
 
 [dependencies]
 portage-core = { path = "../portage-core" }
+rusqlite = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

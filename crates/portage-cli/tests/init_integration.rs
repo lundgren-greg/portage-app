@@ -17,6 +17,7 @@ fn help_prints_usage_and_exits_zero() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("portage"));
     assert!(text.contains("init"));
+    assert!(text.contains("doctor"));
 }
 
 #[test]
@@ -34,6 +35,10 @@ fn init_creates_lock_and_config_in_data_dir() {
     // legitimate, but each must match its contract exactly.
     if out.status.success() {
         assert!(data_dir.join("portage.lock").exists(), "lock file missing");
+        assert!(
+            data_dir.join("catalog.sqlite").exists(),
+            "catalog.sqlite missing after init"
+        );
         let config = data_dir.join("config.yaml");
         assert!(config.exists(), "config missing");
         let yaml = std::fs::read_to_string(config).expect("read config");

@@ -7,11 +7,11 @@
 |-------|--------|
 | **Local path** | `C:\Repos\portage-app` |
 | **GitHub** | `lundgren-greg/portage-app` |
-| **Branch** | `main` |
-| **Last commit** | Run `git log -1 --oneline` |
+| **Branch** | `feat/pr3-catalog-sqlite` (tracks `origin`) |
+| **Last commit** | `a6937fb` feat(catalog): SQLite WAL schema, migrations, file/blob/replica queries |
 | **Remote** | `origin` → https://github.com/lundgren-greg/portage-app.git |
-| **Status** | Public. PR 1 is on main. Next: PR 1.5. |
-| **Updated** | 2026-08-14 |
+| **Status** | **Paused 2026-08-17.** PRs 1, 1.5, 2 and Dependabot #10/#11 are on `main`. PR 3 is implemented and open as [#12](https://github.com/lundgren-greg/portage-app/pull/12). Do not start PR 4 until #12 merges. |
+| **Updated** | 2026-08-17 |
 
 ---
 
@@ -30,15 +30,17 @@ Ship a Windows-first tool (`portage` CLI, then `portage-tui`, plus `portage ask`
 5. Ported the brainstorm decisions (`docs/brainstorm.md`): clarify-then-plan agent, **local or online** LLM (Grok default; Ollama/LM Studio), desire + priority `Intent`, redacted catalog digest for online providers.
 6. **PR 1 merged:** Cargo workspace, eight crate stubs, `portage --help`, `portage init`.
 7. **PR 1.5 merged:** `portage-core::obs` — JSONL logging with enforced redaction, metrics registry, Prometheus snapshot, `portage status`, CI coverage gate (≥80% on core/catalog/engine).
-8. **PR 2 opened:** `portage-core` ids (BLAKE3 `ContentId`, typed ids), streaming `MultiHasher` (BLAKE3+MD5/SHA1/SHA256, 1 MiB buffer), `QuickHash` 64 KiB prefilter, `paths::ensure_inside` (traversal/ADS/symlink containment). QuickXor deferred to PR 8.
-9. **Next:** merge PR 2, then **PR 3** (SQLite catalog schema, migrations, single-writer lock).
+8. **PR 2 merged:** `portage-core` ids (BLAKE3 `ContentId`, typed ids), streaming `MultiHasher` (BLAKE3+MD5/SHA1/SHA256, 1 MiB buffer), `QuickHash` 64 KiB prefilter, `paths::ensure_inside` (traversal/ADS/symlink containment). QuickXor deferred to PR 8.
+9. Dependabot CI bumps merged: `actions/cache` v6 (#10), `actions/checkout` v7 (#11).
+10. **PR 3 implemented and opened** as [#12](https://github.com/lundgren-greg/portage-app/pull/12) on `feat/pr3-catalog-sqlite` (`a6937fb`). SQLite WAL catalog (`migrations/0001` + `0002`), exclusive/shared `portage.lock`, proto-blob on file insert, lookup by path and `ContentId`, capacity snapshots, `portage doctor` + `--backup`. Local `cargo test --workspace`, clippy, and llvm-cov (~85% lines) were green; CI on #12 was still running when we paused.
+11. **Paused** (user request). Leftover *uncommitted* local files are not part of #12: `.agents/skills/next-pr/`, `.cursor/`, `.grok/`, `CLAUDE.md`, plus dirty `AGENTS.md` / copilot-instructions / skills README / `How-we-work.md` (next-pr skill wiring). Leave them unless a later session wants that as its own PR.
 
 ---
 
 ## Next steps (ordered)
 
-1. PR 3 — SQLite catalog: schema, migrations, single-writer `portage.lock` enforcement.
-2. Follow PRs 4–13 exactly as written. **No-data-loss P0** (apply + undo refuse) before TUI/NL. Merge gates for planner PRs: P-space and P-last-copy tests. Every PR: unit tests + ≥1 integration test per touched boundary.
+1. Resume: check CI on [#12](https://github.com/lundgren-greg/portage-app/pull/12), merge if green. Then **PR 4** — local provider: volumes (including USB), overlay roots, placeholders, walk. Do not start PR 4 on this pause.
+2. Follow PRs 5–13 exactly as written. **No-data-loss P0** (apply + undo refuse) before TUI/NL. Merge gates for planner PRs: P-space and P-last-copy tests. Every PR: unit tests + ≥1 integration test per touched boundary.
 4. PR 14 polish → PR 15 `portage-tui` → PR 16 `portage ask` (clarify-then-plan agent, local or online).
 5. Keep this file's **Stopped at** current.
 
@@ -85,8 +87,10 @@ portage-app/
   docs/FEATURES.md
   configs/examples/gaming-clips.yaml
   .github/workflows/ci.yml   # build/test/clippy/fmt matrix + coverage gate
-  crates/portage-core/       # error, units, obs (JSONL+metrics), ids, hash, paths
-  crates/portage-{catalog,auth,providers,media,engine,cli,sim}/  # stubs
+  crates/portage-core/       # error, units, obs, ids, hash, paths, DataPaths
+  crates/portage-catalog/    # SQLite WAL, lock, files/blobs/replicas, doctor
+  crates/portage-{auth,providers,media,engine,sim}/  # stubs
+  migrations/0001_init.sql + 0002_plans_journal.sql
 ```
 
 ### Commands
@@ -96,6 +100,7 @@ cd C:\Repos\portage-app
 cargo run -p portage-cli -- --help
 cargo run -p portage-cli -- init
 cargo run -p portage-cli -- status --format=prom
+cargo run -p portage-cli -- doctor
 cargo test --workspace
 ```
 
@@ -107,7 +112,9 @@ cargo test --workspace
 |------|--------|
 | ~~PR 1 workspace + CLI stub~~ | Merged (#5) |
 | ~~PR 1.5 observability~~ | Merged (#7) |
-| PR 2–5 local inventory | PR 2 (ids/hash/paths) in review; useful on D: of clips before any cloud |
+| ~~PR 2 core ids/hash/paths~~ | Merged (#8) |
+| PR 3 catalog | Open as [#12](https://github.com/lundgren-greg/portage-app/pull/12) — paused before merge |
+| PR 4–5 local inventory | Walk + incremental hash; useful on D: of clips before any cloud |
 | PR 6–8 Drive + OneDrive read | Unified inventory, still no mutations |
 | PR 9–10 planner dry-run | 4 GiB fixture, no writes |
 | PR 11–13 confirmed apply + undo | First real transfers; P0 no-data-loss gate |

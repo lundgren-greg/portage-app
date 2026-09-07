@@ -24,7 +24,7 @@ These are not optional polish. They ship before TUI and before NL compile-to-pla
 - [ ] Incremental BLAKE3 of `LocalFull` files only (`ntfs_file_id + size + mtime` skip).
 - [ ] Google Drive list/delta + quota (`'me' in owners`, ignore Docs/Sheets/shortcuts-as-content).
 - [ ] OneDrive Graph delta + quota (personal `/me/drive` only). M365/SharePoint is Release 2.
-- [ ] Unified catalog: files, proto-blobs, verified/suspect replicas, provider checksum bindings.
+- [x] Unified catalog: files, proto-blobs, verified/suspect replicas, provider checksum bindings. (PR 3; local walk still PR 4)
 - [ ] `search`, `list --collection`, `dups` (confirmed `ContentId` groups vs name+size suspects). Cross-provider dups (USB + Drive + OneDrive) group onto one blob; consolidation plans keep one verified copy at the destination and evict redundant local/USB copies (cloud-side duplicate delete is Release 2).
 - [ ] `capacity` — used / free / quota / staging reserve.
 

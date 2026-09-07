@@ -58,4 +58,17 @@ pub enum Error {
     /// A safety invariant was violated; the current plan must stop.
     #[error("invariant violated: {0}")]
     Invariant(String),
+
+    /// SQLite catalog error (constraint, I/O inside sqlite, unexpected row).
+    #[error("catalog: {0}")]
+    Catalog(String),
+
+    /// The on-disk catalog was migrated by a newer Portage than this binary.
+    #[error("catalog schema version {found} is newer than this build (supports {supported})")]
+    CatalogTooNew {
+        /// `PRAGMA user_version` read from the file.
+        found: i32,
+        /// Highest version this binary knows how to open.
+        supported: i32,
+    },
 }

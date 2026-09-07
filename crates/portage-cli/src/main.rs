@@ -1,8 +1,7 @@
 //! `portage` — inventory local disks and clouds, plan space-safe moves.
 //!
-//! PR 1 scope: `portage --help` and `portage init`. PR 1.5 adds structured
-//! logging, metrics, and `portage status`. Everything else arrives in later
-//! PRs per `docs/design.md`.
+//! PR 1: `--help` / `init`. PR 1.5: logging, metrics, `status`.
+//! PR 3: SQLite catalog + `doctor` integrity stub.
 
 mod cmd;
 
@@ -34,6 +33,13 @@ enum Command {
     /// Show run metrics and data-dir health. --format=prom emits Prometheus
     /// text for a local textfile collector (no listener, no push).
     Status(cmd::status::StatusArgs),
+
+    /// Check catalog integrity (and optionally back up catalog.sqlite).
+    ///
+    /// Overlay, token, and journal audits arrive in later PRs. This stub
+    /// opens the catalog, runs SQLite integrity + foreign-key checks, and
+    /// with --backup copies a checkpointed catalog next to the live file.
+    Doctor(cmd::doctor::DoctorArgs),
 }
 
 fn main() -> std::process::ExitCode {
@@ -41,6 +47,7 @@ fn main() -> std::process::ExitCode {
     let result = match cli.command {
         Command::Init(args) => cmd::init::run(&args, cli.verbose),
         Command::Status(args) => cmd::status::run(&args, cli.verbose),
+        Command::Doctor(args) => cmd::doctor::run(&args, cli.verbose),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

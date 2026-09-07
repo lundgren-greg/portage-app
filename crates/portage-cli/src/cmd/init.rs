@@ -1,4 +1,4 @@
-//! `portage init` — create the data directory, config, and lock file.
+//! `portage init` — create the data directory, config, lock file, and catalog.
 //!
 //! Design (`docs/design.md`, UX table + K22): measure the system drive's free
 //! space. If it is below 8 GiB, *recommend* the largest other volume (e.g.
@@ -116,6 +116,12 @@ fn init_at(dir: &Path, verbose: bool) -> Result<()> {
         fs::write(&lock, b"").with_context(|| format!("creating {}", lock.display()))?;
     }
 
+    {
+        let catalog = portage_catalog::Catalog::open(dir, portage_catalog::LockMode::Exclusive)
+            .with_context(|| format!("opening catalog in {}", dir.display()))?;
+        println!("created {}", catalog.paths().catalog().display());
+    }
+
     let config = dir.join("config.yaml");
     if !config.exists() {
         fs::write(&config, example_config())
@@ -127,7 +133,7 @@ fn init_at(dir: &Path, verbose: bool) -> Result<()> {
 
     println!("created {}", lock.display());
     println!("data dir ready: {}", dir.display());
-    println!("next: portage provider add local --root <drive> (PR 4)");
+    println!("next: portage doctor");
     tracing::info!(data_dir = %dir.display(), free = free.bytes(), "data dir initialized");
     Ok(())
 }
