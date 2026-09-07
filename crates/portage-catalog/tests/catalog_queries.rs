@@ -87,7 +87,9 @@ fn placeholder_gets_proto_blob_and_partial_replica() {
         .unwrap();
     assert!(inserted.blob.is_some());
     // Placeholder links to blob via a Partial replica (not last-copy).
-    let replica = inserted.replica.expect("placeholder should have a Partial replica");
+    let replica = inserted
+        .replica
+        .expect("placeholder should have a Partial replica");
     assert_eq!(replica.state, ReplicaState::Partial);
 }
 

@@ -62,5 +62,9 @@ fn doctor_backup_writes_dated_copy() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.starts_with("catalog-") && n.ends_with(".sqlite"))
         .collect();
-    assert_eq!(backups.len(), 1, "expected one dated backup, got {backups:?}");
+    assert_eq!(
+        backups.len(),
+        1,
+        "expected one dated backup, got {backups:?}"
+    );
 }

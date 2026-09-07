@@ -80,7 +80,9 @@ fn directory_has_no_replica_placeholder_has_partial_replica() {
     assert!(inserted.blob.is_some());
     // Placeholder gets a Partial replica to keep the file↔blob link intact
     // without counting as a last-copy.
-    let replica = inserted.replica.expect("placeholder should have a Partial replica");
+    let replica = inserted
+        .replica
+        .expect("placeholder should have a Partial replica");
     assert_eq!(replica.state, ReplicaState::Partial);
 }
 
