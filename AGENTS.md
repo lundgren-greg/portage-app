@@ -3,13 +3,13 @@
 Read `PROJECT.md` first for current status, blockers, and the session resume checklist.
 Keep it updated when you stop work.
 
-Starter skills are in `.agents/skills/` (commit, PR, review, debug, TDD, plan, security, PowerShell, simplify, verify). Same pack is installed machine-wide from `C:\Repos\Scripts\Install-AgentSkills.ps1`.
+Starter skills are in `.agents/skills/` (including **`next-pr`**, commit, PR, review, debug, TDD, plan, security, PowerShell, simplify, verify). Same engineering pack is installed machine-wide from `C:\Repos\Scripts\Install-AgentSkills.ps1`. Complementary skills (docx, spec, implement, …) live in `%USERPROFILE%\.agents\skills`.
 
 ## What to implement
 
-This repo is a **greenfield** app. The approved design is [`docs/design.md`](docs/design.md). The feature checklist is [`docs/FEATURES.md`](docs/FEATURES.md).
+The approved design is [`docs/design.md`](docs/design.md). The feature checklist is [`docs/FEATURES.md`](docs/FEATURES.md).
 
-**Start at PR 1** in the design's PR Plan. Do not invent a different architecture. Do not implement apply/providers before the catalog and planner exist, except where the plan says PR 6 is independent of hashing.
+**Implement the next numbered PR only** (`/next-pr`). Read `PROJECT.md` for which that is. Do not invent a different architecture. Do not implement apply/providers before the catalog and planner exist, except where the plan says PR 6 can proceed after PR 4.
 
 ## Product rules
 
@@ -46,8 +46,6 @@ docs/
 migrations/
 ```
 
-Until PR 1, `src/` and `tests/` are unused template dirs.
-
 ## Conventions
 
 - Rust edition 2021, stable toolchain, `clippy -D warnings`.
@@ -58,12 +56,11 @@ Until PR 1, `src/` and `tests/` are unused template dirs.
 
 ## Build, test, commit
 
-After PR 1:
-
 ```powershell
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --all -- --check
+cargo run -p portage-cli -- --help
 ```
 
 Planner PRs are incomplete without P-space and P-last-copy tests.

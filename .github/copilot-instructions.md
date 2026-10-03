@@ -6,13 +6,13 @@ and the session resume checklist; keep it updated when you stop work.
 Approved design: `docs/design.md`. Feature checklist: `docs/FEATURES.md`.
 Implement the next PR in that plan. Do not invent a different stack or skip safety gates.
 
-Project skills are in `.agents/skills/`. Use them for commit, PR, review, debug,
-TDD, planning, security review, and PowerShell.
+Project skills are in `.agents/skills/`. Use **`next-pr`** to implement the next
+design PR. Also: commit, PR, review, debug, TDD, plan, security, PowerShell.
 
 ## Architecture
 
-After PR 1, business logic lives in `crates/portage-*`. The CLI is a thin clap
-binary named `portage`. Until then, do not put app code in `src/`.
+Business logic lives in `crates/portage-*`. The CLI is a thin clap binary named
+`portage`. Do not put app code in a top-level `src/`.
 
 ## Hard rules
 

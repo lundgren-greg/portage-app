@@ -1,0 +1,6 @@
+---
+description: Portage agent rules — read before any change
+alwaysApply: true
+---
+
+Follow `AGENTS.md` and `PROJECT.md`. Implement the next numbered PR in `docs/design.md` only (`/next-pr`). Never invent a stack, never apply a plan, never add share-link APIs, never open cloud placeholders.
