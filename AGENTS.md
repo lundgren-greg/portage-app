@@ -9,7 +9,7 @@ Starter skills are in `.agents/skills/` (including **`next-pr`**, commit, PR, re
 
 The approved design is [`docs/design.md`](docs/design.md). The feature checklist is [`docs/FEATURES.md`](docs/FEATURES.md).
 
-**Implement the next numbered PR only** (`/next-pr`). Read `PROJECT.md` for which that is. Do not invent a different architecture. Do not implement apply/providers before the catalog and planner exist, except where the plan says PR 6 can proceed after PR 4.
+**Implement the next numbered PR only** (`/next-pr`). Read `PROJECT.md` for which that is. Do not invent a different architecture. Start a PR only when every PR on its **Depends on** line is merged: providers (PR 4+) need the catalog (PR 3), and apply needs the planner (PR 10) and executor (PR 11).
 
 ## Product rules
 

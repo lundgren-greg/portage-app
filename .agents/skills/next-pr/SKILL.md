@@ -33,7 +33,7 @@ Next numbered PR after what `PROJECT.md` says is merged. Confirm with `gh pr lis
 
 ## Do not
 
-- Skip ahead to providers, planner, apply, TUI (15), or NL (16) except where the design marks a PR independent (PR 6 after PR 4).
+- Start a PR before every PR on its **Depends on** line is merged (providers need the catalog; apply needs the planner and executor; TUI (15) and NL (16) wait as the design says).
 - Add share-link / `anyoneWithLink` APIs.
 - Open OneDrive / DriveFS placeholders.
 - Apply a plan without a typed plan id. The LLM never applies.

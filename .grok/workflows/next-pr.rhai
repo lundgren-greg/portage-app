@@ -12,7 +12,7 @@ let meta = #{
 
 phase("Scope");
 let scope = agent(
-    "You are scoping the next Portage PR. Read C:\\Repos\\portage-app\\PROJECT.md and the PR Plan at the bottom of C:\\Repos\\portage-app\\docs\\design.md using read_file. Identify the next unmerged numbered PR. Read that PR's Description and Files/components. Also run git -C C:\\Repos\\portage-app status -sb and git -C C:\\Repos\\portage-app log -1 --oneline. Reply with: PR number, title, files, and one-sentence done criterion. Do not implement.",
+    "You are scoping the next Portage PR. Read C:\\Repos\\portage-app\\PROJECT.md and the PR Plan at the bottom of C:\\Repos\\portage-app\\docs\\design.md using read_file. PROJECT.md can be stale, so also run gh pr list --repo lundgren-greg/portage-app --state merged --limit 30 and gh pr list --repo lundgren-greg/portage-app --state open, and treat a design PR as done when its GitHub PR is merged even if PROJECT.md still calls it open. Identify the next unmerged numbered PR. Read that PR's Description and Files/components. Also run git -C C:\\Repos\\portage-app status -sb and git -C C:\\Repos\\portage-app log -1 --oneline. Reply with: PR number, title, files, and one-sentence done criterion. Do not implement.",
     #{ label: "scope", capability_mode: "read-only" }
 );
 if scope == () || !scope.success {
