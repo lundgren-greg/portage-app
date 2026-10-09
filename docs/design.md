@@ -1790,7 +1790,7 @@ Do not implement these in Release 1. They do not take priority over R1 no-data-l
 
 ## PR Plan
 
-Incremental, each PR independently reviewable and mergeable, this repo → usable MVP (local + Google Drive + OneDrive + planner + confirmed apply). Implementation agents start at PR 1. The repo already exists: `lundgren-greg/portage-app`.
+Incremental, each PR independently reviewable and mergeable, this repo → usable MVP (local + Google Drive + OneDrive + planner + confirmed apply). Implementation agents take the next unmerged PR in this list (see `PROJECT.md` and the `next-pr` skill). The repo already exists: `lundgren-greg/portage-app`.
 
 ### PR 1 — Repository skeleton and CLI shell
 

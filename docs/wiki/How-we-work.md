@@ -18,7 +18,7 @@ Do not treat the wiki as a second design doc. If the spec changes, change `docs/
 ## Agents and contributors
 
 1. Read `PROJECT.md`, then the design **PR Plan**.
-2. Implement the **next numbered PR only** (unless the design marks it independent).
+2. Implement the **next numbered PR only** (`/next-pr`), unless the design marks it independent.
 3. Branch from `main` and open a pull request.
 4. Planner PRs are incomplete without P-space and P-last-copy tests.
 5. No share-link APIs. No placeholder hydration. No apply without a typed plan id.
