@@ -75,7 +75,10 @@ fn index_temp_dir_writes_file_rows_and_skips_overlay() {
     );
     assert!(!paths.iter().any(|p| p.contains("Synced")));
 
-    let run = cat.file_by_path(&loc, "clips/2026/run.mp4").unwrap().unwrap();
+    let run = cat
+        .file_by_path(&loc, "clips/2026/run.mp4")
+        .unwrap()
+        .unwrap();
     let dir = cat.file_by_path(&loc, "clips/2026").unwrap().unwrap();
     let clips = cat.file_by_path(&loc, "clips").unwrap().unwrap();
     assert_eq!(run.kind, FileKind::Byte);
@@ -178,7 +181,14 @@ fn offline_volume_fails_closed_without_a_scan_row() {
 fn capacity_snapshot_is_recorded() {
     let tree = files_tree();
     let (_db, cat) = open_catalog();
-    add_local(&cat, "local-tmp", tree.path(), None, &HostOverlays::default()).unwrap();
+    add_local(
+        &cat,
+        "local-tmp",
+        tree.path(),
+        None,
+        &HostOverlays::default(),
+    )
+    .unwrap();
     let p = load_local(&cat, "local-tmp", &HostOverlays::default()).unwrap();
     let cap = record_capacity(&cat, &p).unwrap();
     let snap = cat.latest_capacity(&p.location_id()).unwrap().unwrap();

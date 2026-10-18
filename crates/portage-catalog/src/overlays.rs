@@ -70,16 +70,17 @@ mod tests {
         let cat = Catalog::open(tmp.path(), LockMode::Exclusive).unwrap();
         assert!(cat.overlay_roots().unwrap().is_empty());
 
-        cat.upsert_overlay_root(r"C:\Users\example\OneDrive", "overlay:onedrive", "onedrive_userfolder")
+        let od = r"C:\Users\example\OneDrive";
+        let det = "onedrive_userfolder";
+        cat.upsert_overlay_root(od, "overlay:onedrive", det)
             .unwrap();
-        cat.upsert_overlay_root(r"C:\Users\example\OneDrive", "overlay:onedrive", "onedrive_userfolder")
+        cat.upsert_overlay_root(od, "overlay:onedrive", det)
             .unwrap();
         assert_eq!(cat.overlay_roots().unwrap().len(), 1);
 
         // A later PR binds the configured provider; re-detection must not undo it.
-        cat.upsert_overlay_root(r"C:\Users\example\OneDrive", "onedrive", "onedrive_userfolder")
-            .unwrap();
-        cat.upsert_overlay_root(r"C:\Users\example\OneDrive", "overlay:onedrive", "onedrive_userfolder")
+        cat.upsert_overlay_root(od, "onedrive", det).unwrap();
+        cat.upsert_overlay_root(od, "overlay:onedrive", det)
             .unwrap();
         let rows = cat.overlay_roots().unwrap();
         assert_eq!(rows[0].provider_id, "onedrive");

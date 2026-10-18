@@ -69,7 +69,10 @@ mod tests {
     fn plain_files_are_local_full() {
         assert_eq!(classify_attributes(0, false), Hydration::LocalFull);
         // ARCHIVE | READONLY
-        assert_eq!(classify_attributes(0x20 | 0x01, false), Hydration::LocalFull);
+        assert_eq!(
+            classify_attributes(0x20 | 0x01, false),
+            Hydration::LocalFull
+        );
     }
 
     #[test]

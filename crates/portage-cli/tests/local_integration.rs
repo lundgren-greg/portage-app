@@ -54,10 +54,9 @@ fn add_index_capacity_doctor_on_temp_tree() {
     let data = TempDir::new().unwrap();
     let root = files.path().to_str().unwrap();
 
-    let text = ok(&run(
-        &["provider", "add", "local", "--root", root, "--id", "tmp-tree", "--role", "both"],
-        data.path(),
-    ));
+    let mut add = vec!["provider", "add", "local", "--root", root];
+    add.extend(["--id", "tmp-tree", "--role", "both"]);
+    let text = ok(&run(&add, data.path()));
     assert!(text.contains("tmp-tree"), "{text}");
     assert!(text.contains("roles    : both"), "{text}");
     assert!(text.contains("serial"), "{text}");
@@ -83,15 +82,14 @@ fn bad_role_and_missing_provider_fail() {
     let files = tree();
     let data = TempDir::new().unwrap();
     let root = files.path().to_str().unwrap();
-    let out = run(
-        &["provider", "add", "local", "--root", root, "--role", "hop"],
-        data.path(),
-    );
-    assert!(!out.status.success());
+    let mut add = vec!["provider", "add", "local", "--root", root];
+    add.extend(["--role", "hop"]);
+    assert!(!run(&add, data.path()).status.success());
 
     let out = run(&["index"], data.path());
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("no local providers"));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no local providers"), "{err}");
 
     let out = run(&["index", "--provider", "nope"], data.path());
     assert!(!out.status.success());
@@ -105,7 +103,8 @@ fn add_refuses_drivefs_cache_root() {
     let lad = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA");
     let root = format!(r"{lad}\Google\DriveFS\portage-test-does-not-exist");
     let data = TempDir::new().unwrap();
-    let out = run(&["provider", "add", "local", "--root", &root], data.path());
+    let add = ["provider", "add", "local", "--root", &root];
+    let out = run(&add, data.path());
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("overlay"), "{err}");

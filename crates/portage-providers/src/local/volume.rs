@@ -132,8 +132,13 @@ pub struct Capacity {
 
 /// Given the recorded serial and the currently mounted volumes, find where the
 /// volume is now mounted. Drive-letter changes (`E:` → `F:`) are resolved here.
-pub fn find_mount_for_serial<'a>(serial: &str, mounted: &'a [VolumeInfo]) -> Option<&'a VolumeInfo> {
-    mounted.iter().find(|v| v.serial.eq_ignore_ascii_case(serial))
+pub fn find_mount_for_serial<'a>(
+    serial: &str,
+    mounted: &'a [VolumeInfo],
+) -> Option<&'a VolumeInfo> {
+    mounted
+        .iter()
+        .find(|v| v.serial.eq_ignore_ascii_case(serial))
 }
 
 /// Rebase `root` from `old_mount` onto `new_mount` (`E:\Media` → `F:\Media`).
@@ -144,13 +149,9 @@ pub fn rebase_root(root: &Path, old_mount: &Path, new_mount: &Path) -> Option<Pa
     if !is_within(&root_s, &old_s, HOST_CASE_INSENSITIVE) {
         return None;
     }
-    let rel = root.strip_prefix(old_mount).ok().map(Path::to_path_buf).or_else(|| {
-        // Case-only difference on Windows: drop the mount prefix by length.
-        let trimmed = old_s.trim_end_matches(['\\', '/']);
-        root_s
-            .get(trimmed.len()..)
-            .map(|r| PathBuf::from(r.trim_start_matches(['\\', '/'])))
-    })?;
+    // Drop the mount prefix by length (it may differ only in case).
+    let prefix_len = old_s.trim_end_matches(['\\', '/']).len();
+    let rel = root_s.get(prefix_len..)?.trim_start_matches(['\\', '/']);
     Some(new_mount.join(rel))
 }
 
@@ -173,7 +174,9 @@ pub fn capacity(mount: &Path) -> io::Result<Capacity> {
 #[cfg(windows)]
 mod imp {
     use super::*;
+
     use crate::local::win::{to_wide, Handle};
+
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
         GetVolumePathNameW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -187,8 +190,9 @@ mod imp {
     pub fn probe(path: &Path) -> io::Result<VolumeInfo> {
         let wide = to_wide(path.as_os_str());
         let mut buf = [0u16; 1024];
+        let len = buf.len() as u32;
         // SAFETY: `wide` is NUL-terminated; `buf` length is passed.
-        let ok = unsafe { GetVolumePathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+        let ok = unsafe { GetVolumePathNameW(wide.as_ptr(), buf.as_mut_ptr(), len) };
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -274,9 +278,9 @@ mod imp {
         if ok == 0 || (returned as usize) < std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
             return None;
         }
+        let ptr = out.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR;
         // SAFETY: the kernel filled at least one descriptor; read unaligned.
-        let desc: STORAGE_DEVICE_DESCRIPTOR =
-            unsafe { std::ptr::read_unaligned(out.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR) };
+        let desc = unsafe { std::ptr::read_unaligned(ptr) };
         Some(bus_name(desc.BusType as u32).to_string())
     }
 
@@ -294,10 +298,10 @@ mod imp {
 
     pub fn capacity(mount: &Path) -> io::Result<Capacity> {
         let wide = to_wide(mount.as_os_str());
+        let path = wide.as_ptr();
         let (mut avail, mut total, mut total_free) = (0u64, 0u64, 0u64);
-        // SAFETY: out-pointers are valid u64s.
-        let ok =
-            unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, &mut total, &mut total_free) };
+        // SAFETY: `path` is NUL-terminated; out-pointers are valid u64s.
+        let ok = unsafe { GetDiskFreeSpaceExW(path, &mut avail, &mut total, &mut total_free) };
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -400,15 +404,12 @@ mod tests {
 
     #[test]
     fn drivefs_volume_is_detected_by_label_or_fs() {
-        assert!(vol("G:\\", "1", "Google Drive", "FAT32", DriveType::Fixed)
-            .cloud_volume_reason()
-            .is_some());
-        assert!(vol("G:\\", "1", "", "DriveFS", DriveType::Fixed)
-            .cloud_volume_reason()
-            .is_some());
-        assert!(vol("D:\\", "1", "Data", "NTFS", DriveType::Fixed)
-            .cloud_volume_reason()
-            .is_none());
+        let by_label = vol("G:\\", "1", "Google Drive", "FAT32", DriveType::Fixed);
+        assert!(by_label.cloud_volume_reason().is_some());
+        let by_fs = vol("G:\\", "1", "", "DriveFS", DriveType::Fixed);
+        assert!(by_fs.cloud_volume_reason().is_some());
+        let plain = vol("D:\\", "1", "Data", "NTFS", DriveType::Fixed);
+        assert!(plain.cloud_volume_reason().is_none());
     }
 
     #[test]

@@ -158,9 +158,13 @@ fn walk(cat: &Catalog, provider: &LocalProvider, report: &mut IndexReport) -> Re
         } else {
             report.files += 1;
         }
-        batch
-            .rows
-            .push(new_file(&location_id, &serial, parent_id, report.scan_id, meta)?);
+        batch.rows.push(new_file(
+            &location_id,
+            &serial,
+            parent_id,
+            report.scan_id,
+            meta,
+        )?);
         if batch.rows.len() >= BATCH {
             batch.flush(cat, &mut dir_ids)?;
         }
@@ -176,9 +180,10 @@ fn new_file(
     meta: ObjectMeta,
 ) -> Result<NewFile, Error> {
     let size = match meta.size {
-        Some(s) => Some(i64::try_from(s).map_err(|_| {
-            Error::Invariant(format!("file size overflows i64: {}", meta.path))
-        })?),
+        Some(s) => Some(
+            i64::try_from(s)
+                .map_err(|_| Error::Invariant(format!("file size overflows i64: {}", meta.path)))?,
+        ),
         None => None,
     };
     Ok(NewFile {

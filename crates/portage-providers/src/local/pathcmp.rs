@@ -96,7 +96,11 @@ mod tests {
     fn within_is_component_wise_and_case_insensitive_on_windows_rules() {
         let od = r"C:\Users\example\OneDrive";
         assert!(is_within(r"C:\Users\example\OneDrive", od, true));
-        assert!(is_within(r"c:\users\EXAMPLE\onedrive\Clips\a.mp4", od, true));
+        assert!(is_within(
+            r"c:\users\EXAMPLE\onedrive\Clips\a.mp4",
+            od,
+            true
+        ));
         assert!(is_within(r"\\?\C:\Users\example\OneDrive\x", od, true));
         assert!(!is_within(r"C:\Users\example\OneDriveBackup", od, true));
         assert!(!is_within(r"C:\Users\example", od, true));

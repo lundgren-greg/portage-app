@@ -131,10 +131,8 @@ pub fn detect_overlay_roots(
 ) -> Vec<OverlayRoot> {
     let mut out: Vec<OverlayRoot> = Vec::new();
     let mut push = |path: String, provider_id: &str, detector: Detector| {
-        if !out
-            .iter()
-            .any(|o| same_path(&path_str(&o.path), &path, case_insensitive))
-        {
+        let same = |o: &OverlayRoot| same_path(&path_str(&o.path), &path, case_insensitive);
+        if !out.iter().any(same) {
             out.push(OverlayRoot {
                 path: PathBuf::from(path),
                 provider_id: provider_id.to_string(),
@@ -340,11 +338,8 @@ mod tests {
 
     #[test]
     fn no_clients_only_drivefs_cache_is_excluded() {
-        let roots = detect_overlay_roots(
-            &FakeRegistry::default(),
-            &FakeEnv::localappdata(LAD),
-            true,
-        );
+        let env = FakeEnv::localappdata(LAD);
+        let roots = detect_overlay_roots(&FakeRegistry::default(), &env, true);
         assert_eq!(
             paths(&roots),
             vec![(format!(r"{LAD}\Google\DriveFS"), Detector::DrivefsCache)]

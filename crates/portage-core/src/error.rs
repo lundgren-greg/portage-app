@@ -74,7 +74,7 @@ pub enum Error {
 
     /// A local root is (or sits inside) a cloud overlay / sync root, or on a
     /// DriveFS / Cloud Filter volume. Add the cloud provider instead (K6).
-    #[error("{} is a cloud overlay ({reason}); use `portage provider add google-drive` / `onedrive` instead", path.display())]
+    #[error("{} is a cloud overlay ({reason}); add that cloud provider instead", path.display())]
     OverlayRoot {
         /// The refused path.
         path: PathBuf,

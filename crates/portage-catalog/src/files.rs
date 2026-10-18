@@ -164,7 +164,7 @@ impl Catalog {
             )
             .map_err(map_sql)?;
         let rows = stmt
-            .query_map([location_id], map_file_row)
+            .query_map(rusqlite::params![location_id], map_file_row)
             .map_err(map_sql)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_sql)
     }
@@ -275,7 +275,14 @@ fn insert_file_in(tx: &rusqlite::Transaction<'_>, new: &NewFile) -> Result<Inser
 }
 
 fn upsert_scanned_in(tx: &rusqlite::Transaction<'_>, new: &NewFile) -> Result<i64, Error> {
-    type Existing = (i64, String, Option<i64>, Option<String>, Option<String>, String);
+    type Existing = (
+        i64,
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+    );
     let existing: Option<Existing> = tx
         .query_row(
             "SELECT id, kind, size, mtime_utc, ntfs_file_id, hydration

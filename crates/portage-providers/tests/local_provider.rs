@@ -37,11 +37,12 @@ fn host_with_overlay(root: &Path) -> HostOverlays {
     // path; inject it directly so the skip logic is exercised on every OS.
     let mut host = HostOverlays::from_readers(&reg, &FakeEnv::default(), cfg!(windows));
     if host.roots.is_empty() {
-        host.roots.push(portage_providers::local::sync_roots::OverlayRoot {
-            path: canonical.join("FakeOneDrive"),
-            provider_id: "overlay:onedrive".into(),
-            detector: portage_providers::local::sync_roots::Detector::OnedriveUserfolder,
-        });
+        host.roots
+            .push(portage_providers::local::sync_roots::OverlayRoot {
+                path: canonical.join("FakeOneDrive"),
+                provider_id: "overlay:onedrive".into(),
+                detector: portage_providers::local::sync_roots::Detector::OnedriveUserfolder,
+            });
     }
     host
 }
@@ -81,14 +82,28 @@ fn add_list_stat_open_and_capacity() {
     let paths: Vec<_> = entries.iter().map(|m| m.path.as_str()).collect();
     assert_eq!(
         paths,
-        vec!["clips", "clips/2026", "clips/2026/a.mp4", "clips/b.mkv", "top.txt"]
+        vec![
+            "clips",
+            "clips/2026",
+            "clips/2026/a.mp4",
+            "clips/b.mkv",
+            "top.txt"
+        ]
     );
-    assert_eq!(skipped.len(), 1, "inner overlay reported once, not descended");
-    assert!(entries
+    assert_eq!(
+        skipped.len(),
+        1,
+        "inner overlay reported once, not descended"
+    );
+    assert!(entries.iter().all(|m| m.hydration == Hydration::LocalFull));
+    let a = entries
         .iter()
-        .all(|m| m.hydration == Hydration::LocalFull));
-    let a = entries.iter().find(|m| m.path == "clips/2026/a.mp4").unwrap();
-    assert_eq!((a.size, a.is_dir, a.name.as_str()), (Some(4), false, "a.mp4"));
+        .find(|m| m.path == "clips/2026/a.mp4")
+        .unwrap();
+    assert_eq!(
+        (a.size, a.is_dir, a.name.as_str()),
+        (Some(4), false, "a.mp4")
+    );
     assert!(a.file_id.is_some());
     assert!(entries.iter().find(|m| m.path == "clips").unwrap().is_dir);
 

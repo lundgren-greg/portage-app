@@ -139,7 +139,10 @@ impl LocalConfig {
             volume_serial: text("volume_serial")?.to_string(),
             volume_label: text("volume_label").unwrap_or_default().to_string(),
             volume_mount: PathBuf::from(text("volume_mount")?),
-            removable: v.get("removable").and_then(|x| x.as_bool()).unwrap_or(false),
+            removable: v
+                .get("removable")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false),
             bus: v.get("bus").and_then(|x| x.as_str()).map(str::to_string),
             drive_type: text("drive_type").unwrap_or("unknown").to_string(),
         })
@@ -214,7 +217,9 @@ pub fn check_root(
         }
     }
     if root_hydration != Hydration::LocalFull {
-        return Err(refuse("root directory is a Cloud Filter placeholder".into()));
+        return Err(refuse(
+            "root directory is a Cloud Filter placeholder".into(),
+        ));
     }
     Ok(())
 }
@@ -302,12 +307,13 @@ pub fn resolve_root_with(
         serial: config.volume_serial.clone(),
         root: config.root.clone(),
     };
-    let found = volume::find_mount_for_serial(&config.volume_serial, mounted).ok_or_else(offline)?;
+    let found =
+        volume::find_mount_for_serial(&config.volume_serial, mounted).ok_or_else(offline)?;
     if found.cloud_volume_reason().is_some() {
         return Err(offline());
     }
-    let root =
-        volume::rebase_root(&config.root, &config.volume_mount, &found.mount).ok_or_else(offline)?;
+    let root = volume::rebase_root(&config.root, &config.volume_mount, &found.mount)
+        .ok_or_else(offline)?;
     Ok(Resolved {
         root,
         mount: found.mount.clone(),
@@ -484,11 +490,7 @@ impl Provider for LocalProvider {
 
     fn list(&self) -> Result<Box<dyn Iterator<Item = ListItem> + '_>, Error> {
         let resolved = self.resolve()?;
-        let skip: Vec<String> = self
-            .overlays
-            .iter()
-            .map(|o| path_str(&o.path))
-            .collect();
+        let skip: Vec<String> = self.overlays.iter().map(|o| path_str(&o.path)).collect();
         let it = walkdir::WalkDir::new(&resolved.root)
             .follow_links(false)
             .sort_by_file_name()
@@ -718,7 +720,13 @@ mod tests {
         // A volume whose mount is itself a registered overlay.
         let g = vol("G:\\", "3", "", DriveType::Fixed);
         assert!(matches!(
-            check_root(r"\\?\Volume{x}\y", &host().roots, Some(&g), Hydration::LocalFull, true),
+            check_root(
+                r"\\?\Volume{x}\y",
+                &host().roots,
+                Some(&g),
+                Hydration::LocalFull,
+                true
+            ),
             Err(Error::OverlayRoot { .. })
         ));
     }

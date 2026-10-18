@@ -10,16 +10,15 @@ use portage_core::Error;
 use crate::local::pathcmp::{is_within, path_str, HOST_CASE_INSENSITIVE};
 use crate::local::sync_roots::OverlayRoot;
 use crate::traits::Provider;
-use crate::local::{location_id, prepare_local, HostOverlays, LocalConfig, LocalProvider, Resolved, Role};
+
+use crate::local::{
+    location_id, prepare_local, HostOverlays, LocalConfig, LocalProvider, Resolved, Role,
+};
 
 /// Validate a provider id: 1–64 chars of `[a-z0-9_-]`.
 pub fn validate_provider_id(id: &str) -> Result<(), Error> {
-    let ok = !id.is_empty()
-        && id.len() <= 64
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
-    if ok {
+    let valid = |b: u8| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_');
+    if !id.is_empty() && id.len() <= 64 && id.bytes().all(valid) {
         Ok(())
     } else {
         Err(Error::ProviderConfig(format!(
@@ -91,9 +90,9 @@ pub fn add_local(
             .config()
             .volume_serial
             .eq_ignore_ascii_case(&config.volume_serial);
-        if same_volume
-            && (is_within(&a, &b, HOST_CASE_INSENSITIVE) || is_within(&b, &a, HOST_CASE_INSENSITIVE))
-        {
+        let ci = HOST_CASE_INSENSITIVE;
+        let overlaps = is_within(&a, &b, ci) || is_within(&b, &a, ci);
+        if same_volume && overlaps {
             return Err(Error::ProviderConfig(format!(
                 "root {a} overlaps provider {} ({b}); one tree, one provider",
                 other.id()
@@ -102,11 +101,8 @@ pub fn add_local(
     }
 
     save_local(cat, id, &config)?;
-    Ok(LocalProvider::new(
-        ProviderId::new(id),
-        config,
-        host.roots.clone(),
-    ))
+    let roots = host.roots.clone();
+    Ok(LocalProvider::new(ProviderId::new(id), config, roots))
 }
 
 fn save_local(cat: &Catalog, id: &str, config: &LocalConfig) -> Result<(), Error> {
@@ -185,7 +181,8 @@ mod tests {
     fn default_ids() {
         assert_eq!(default_local_id(Path::new(r"D:\")), "local-d");
         assert_eq!(default_local_id(Path::new(r"\\?\E:\Media")), "local-e");
-        assert_eq!(default_local_id(&PathBuf::from("/media/My USB")), "local-my-usb");
+        let usb = PathBuf::from("/media/My USB");
+        assert_eq!(default_local_id(&usb), "local-my-usb");
         assert_eq!(default_local_id(Path::new("/")), "local-root");
     }
 }
