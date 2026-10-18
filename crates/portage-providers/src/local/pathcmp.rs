@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 pub const HOST_CASE_INSENSITIVE: bool = cfg!(windows);
 
 /// Split a path into comparable components. Accepts `\` and `/`, strips
-/// `\\?\` / `\\?\UNC\` verbatim prefixes, drops empty and `.` parts.
+/// `\\?\` / `\\?\UNC\` verbatim prefixes, drops empty and `.` parts, and
+/// folds `..` into its parent in absolute paths. `..` never climbs above a
+/// drive (`C:`), a UNC share (`\\server\share`), or `/`.
 fn components(path: &str, case_insensitive: bool) -> Vec<String> {
     let trimmed = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
@@ -20,23 +22,59 @@ fn components(path: &str, case_insensitive: bool) -> Vec<String> {
         path.to_string()
     };
     let unc = trimmed.starts_with(r"\\") || trimmed.starts_with("//");
-    let mut out: Vec<String> = trimmed
-        .split(['\\', '/'])
-        .filter(|p| !p.is_empty() && *p != ".")
-        .map(|p| {
-            if case_insensitive {
-                p.to_lowercase()
-            } else {
-                p.to_string()
-            }
-        })
-        .collect();
+    let drive = {
+        let b = trimmed.as_bytes();
+        b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+    };
+    let mut out: Vec<String> = Vec::new();
     if unc {
-        out.insert(0, String::from(r"\\"));
+        out.push(String::from(r"\\"));
     } else if trimmed.starts_with('/') {
-        out.insert(0, String::from("/"));
+        out.push(String::from("/"));
+    }
+    // What `..` may not pop: `\\` + server + share, the drive, or `/`.
+    let floor = match (unc, drive) {
+        (true, _) => 3,
+        (false, true) => 1,
+        (false, false) => out.len(),
+    };
+    let absolute = unc || drive || !out.is_empty();
+    for p in trimmed.split(['\\', '/']) {
+        if p.is_empty() || p == "." {
+            continue;
+        }
+        if p == ".." && absolute {
+            if out.len() > floor {
+                out.pop();
+            }
+            continue;
+        }
+        out.push(if case_insensitive {
+            p.to_lowercase()
+        } else {
+            p.to_string()
+        });
     }
     out
+}
+
+/// Absolute `path` with `.` / `..` folded (see [`components`]); relative
+/// paths are returned unchanged. Detector roots are stored in this form so
+/// they compare like the canonical roots `provider add local` records.
+pub fn normalize(path: &str) -> String {
+    let parts = components(path, false);
+    match parts.first().map(String::as_str) {
+        Some(r"\\") => format!(r"\\{}", parts[1..].join(r"\")),
+        Some("/") => format!("/{}", parts[1..].join("/")),
+        Some(d) if d.len() == 2 && d.ends_with(':') => {
+            if parts.len() == 1 {
+                format!(r"{d}\")
+            } else {
+                parts.join(r"\")
+            }
+        }
+        _ => path.to_string(),
+    }
 }
 
 /// True if `child` equals `parent` or lives under it.
@@ -108,6 +146,26 @@ mod tests {
         assert!(is_within("/home/example/x", "/home/example", false));
         assert!(!is_within("/home/examplex", "/home/example", false));
         assert!(!is_within("anything", "", false));
+    }
+
+    #[test]
+    fn parent_components_fold_but_never_cross_drive_or_share() {
+        let od = r"C:\Users\example\OneDrive";
+        let dotted = r"C:\Users\example\AppData\Local\..\..\OneDrive";
+        assert!(is_within(&format!(r"{dotted}\x"), od, true));
+        assert!(is_within(r"C:\Users\example\OneDrive\x", dotted, true));
+        assert!(same_path(r"C:\..\..\Users", r"C:\Users", true));
+        assert!(!is_within(r"\\nas\share\..\other\x", r"\\nas\other", true));
+        assert!(is_within(r"\\nas\share\..\..\x", r"\\nas\share", true));
+        assert!(same_path("/a/b/../c", "/a/c", false));
+        assert!(same_path("/../a", "/a", false));
+        // Relative paths keep `..`: there is nothing to fold it into.
+        assert!(!same_path("../a", "a", false));
+        assert_eq!(normalize(dotted), od);
+        assert_eq!(normalize("G:"), r"G:\");
+        assert_eq!(normalize(r"\\nas\s\a\..\b"), r"\\nas\s\b");
+        assert_eq!(normalize("/a/./b/../c"), "/a/c");
+        assert_eq!(normalize("rel/../x"), "rel/../x");
     }
 
     #[test]

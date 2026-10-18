@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use super::pathcmp::{as_absolute_windows_path, is_within, path_str, same_path};
+use super::pathcmp::{as_absolute_windows_path, is_within, normalize, path_str, same_path};
 
 /// HKCU-relative key for OneDrive.
 pub const ONEDRIVE_KEY: &str = r"Software\Microsoft\OneDrive";
@@ -131,6 +131,9 @@ pub fn detect_overlay_roots(
 ) -> Vec<OverlayRoot> {
     let mut out: Vec<OverlayRoot> = Vec::new();
     let mut push = |path: String, provider_id: &str, detector: Detector| {
+        // `%LOCALAPPDATA%\..\OneDrive` must compare like the canonical
+        // path a root is recorded under, so fold `..` before storing.
+        let path = normalize(&path);
         let same = |o: &OverlayRoot| same_path(&path_str(&o.path), &path, case_insensitive);
         if !out.iter().any(same) {
             out.push(OverlayRoot {
@@ -445,9 +448,14 @@ mod tests {
             r"%LOCALAPPDATA%\..\OneDrive",
         );
         let roots = detect_overlay_roots(&reg, &env, true);
-        assert!(roots
+        let od = roots
             .iter()
-            .any(|r| r.detector == Detector::OnedriveUserfolder));
+            .find(|r| r.detector == Detector::OnedriveUserfolder)
+            .unwrap();
+        // Stored folded, so it excludes the canonical target.
+        assert_eq!(path_str(&od.path), r"C:\Users\example\AppData\OneDrive");
+        let canonical = r"C:\Users\example\AppData\OneDrive\Clips";
+        assert!(containing_overlay(canonical, &roots, true).is_some());
     }
 
     #[test]
