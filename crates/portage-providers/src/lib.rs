@@ -1,7 +1,11 @@
-//! Storage providers for Portage: local, Google Drive, OneDrive (stub until PR 4).
+//! Storage providers for Portage. PR 4: local volumes (fixed and removable).
 //!
-//! Intentionally empty in PR 1. Implementation lands in PR 4
-//! per the PR Plan in `docs/design.md`. Do not add logic here early.
+//! Google Drive and OneDrive arrive in PRs 6–8. No provider exposes share-link
+//! or public-ACL APIs (K13).
 
-// Re-exported so the stub compiles with a real dependency edge to core.
-pub use portage_core as core;
+pub mod local;
+pub mod registry;
+pub mod traits;
+
+pub use local::{HostOverlays, LocalConfig, LocalProvider, Role};
+pub use traits::{Capacity, ListItem, ObjectMeta, Provider};
