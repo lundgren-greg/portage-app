@@ -395,9 +395,12 @@ impl LocalProvider {
         self.config.volume_mount = resolved.mount.clone();
     }
 
-    fn full_path(&self, rel: &str) -> Result<PathBuf, Error> {
+    /// `rel` joined onto the *resolved* root. Resolving first means a
+    /// different disk now mounted at the old letter is never read (K24).
+    fn full_path(&self, rel: &str) -> Result<(PathBuf, PathBuf), Error> {
+        let root = self.resolve()?.root;
         let escape = |reason: &str| Error::PathEscape {
-            root: self.config.root.clone(),
+            root: root.clone(),
             candidate: PathBuf::from(rel),
             reason: reason.to_string(),
         };
@@ -411,7 +414,16 @@ impl LocalProvider {
                 _ => return Err(escape("must be a relative path without `..`")),
             }
         }
-        Ok(self.config.root.join(candidate))
+        let full = root.join(candidate);
+        Ok((root, full))
+    }
+
+    /// True if `path` is (inside) any known overlay root (K6).
+    fn in_overlay(&self, path: &Path) -> bool {
+        let ps = path_str(path);
+        self.overlays
+            .iter()
+            .any(|o| is_within(&ps, &path_str(&o.path), HOST_CASE_INSENSITIVE))
     }
 
     fn meta_for(&self, rel: &str, full: &Path, meta: &std::fs::Metadata) -> ObjectMeta {
@@ -504,7 +516,7 @@ impl Provider for LocalProvider {
     }
 
     fn stat(&self, path: &str) -> Result<ObjectMeta, Error> {
-        let full = self.full_path(path)?;
+        let (_, full) = self.full_path(path)?;
         let meta = std::fs::symlink_metadata(&full).map_err(|source| Error::Io {
             path: full.clone(),
             source,
@@ -513,9 +525,26 @@ impl Provider for LocalProvider {
     }
 
     fn open_read(&self, path: &str) -> Result<Box<dyn Read + Send>, Error> {
+        let (root, full) = self.full_path(path)?;
+        let refuse = |reason: &str| Error::OverlayRoot {
+            path: full.clone(),
+            reason: reason.to_string(),
+        };
+        // Overlay trees belong to their cloud provider; never open them (K6).
+        if self.in_overlay(&full) {
+            return Err(refuse("inside an overlay root"));
+        }
         // Classify from metadata first; a placeholder is never opened.
-        let meta = self.stat(path)?;
-        let full = self.full_path(path)?;
+        let raw = std::fs::symlink_metadata(&full).map_err(|source| Error::Io {
+            path: full.clone(),
+            source,
+        })?;
+        // `File::open` follows links, so the attributes checked below would
+        // be the link's, not the target's. The walk skips links; so does this.
+        if raw.file_type().is_symlink() {
+            return Err(refuse("is a symlink or junction"));
+        }
+        let meta = self.meta_for(path, &full, &raw);
         if meta.hydration != Hydration::LocalFull {
             return Err(Error::WouldHydrate { path: full });
         }
@@ -525,7 +554,13 @@ impl Provider for LocalProvider {
                 source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "is a directory"),
             });
         }
-        let checked = portage_core::paths::ensure_inside(&self.config.root, Path::new(path))?;
+        let checked = portage_core::paths::ensure_inside(&root, Path::new(path))?;
+        // An intermediate junction may resolve into an overlay.
+        if let Ok(real) = checked.canonicalize() {
+            if self.in_overlay(&strip_verbatim(real)) {
+                return Err(refuse("resolves into an overlay root"));
+            }
+        }
         let file = File::open(&checked).map_err(|source| Error::Io {
             path: checked,
             source,
@@ -586,13 +621,13 @@ impl Iterator for LocalWalk<'_> {
                 }
             };
             let hydration = placeholder::hydration_of(&meta);
-            if meta.is_dir() && hydration != Hydration::LocalFull {
+            // Skip at most once per entry: a second `skip_current_dir` would
+            // drop the parent's remaining siblings.
+            let rel = relative(&self.root, &path);
+            if meta.is_dir() && (hydration != Hydration::LocalFull || rel.is_none()) {
                 self.it.skip_current_dir();
             }
-            let Some(rel) = relative(&self.root, &path) else {
-                if meta.is_dir() {
-                    self.it.skip_current_dir();
-                }
+            let Some(rel) = rel else {
                 return Some(ListItem::Unreadable {
                     path,
                     message: "name is not valid UTF-8".into(),

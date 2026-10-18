@@ -185,3 +185,47 @@ fn unplugged_volume_fails_closed() {
     assert!(matches!(p.capacity(), Err(Error::VolumeOffline { .. })));
     assert!(matches!(p.list().err(), Some(Error::VolumeOffline { .. })));
 }
+
+#[test]
+fn open_read_refuses_overlays_links_and_other_disks() {
+    let files = tree();
+    let host = host_with_overlay(files.path());
+    let (_db, cat) = catalog();
+    let p = add_local(&cat, "local-tmp", files.path(), None, &host).unwrap();
+
+    // The walk skips the overlay; a direct open must not bypass that.
+    assert!(matches!(
+        p.open_read("FakeOneDrive/inner/secret.mp4"),
+        Err(Error::OverlayRoot { .. })
+    ));
+
+    // A link's attributes are not its target's; links are never opened.
+    let link = files.path().join("clips/link.mp4");
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(files.path().join("top.txt"), &link).is_ok();
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(files.path().join("top.txt"), &link).is_ok();
+    if made {
+        assert!(matches!(
+            p.open_read("clips/link.mp4"),
+            Err(Error::OverlayRoot { .. })
+        ));
+    }
+
+    // Same path, different disk serial: fail closed, never read it (K24).
+    let mut cfg = p.config().clone();
+    cfg.volume_serial = "DEAD-BEEF".into();
+    let other = portage_providers::LocalProvider::new(
+        portage_core::ids::ProviderId::new("local-tmp"),
+        cfg,
+        Vec::new(),
+    );
+    assert!(matches!(
+        other.open_read("top.txt").err(),
+        Some(Error::VolumeOffline { .. })
+    ));
+    assert!(matches!(
+        other.stat("top.txt"),
+        Err(Error::VolumeOffline { .. })
+    ));
+}
