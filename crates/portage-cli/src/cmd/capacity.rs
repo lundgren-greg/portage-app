@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Args;
 use portage_catalog::{Catalog, LockMode};
-use portage_core::ByteSize;
+use portage_core::{ByteSize, Error};
 use portage_engine::index::record_capacity;
 use portage_providers::registry::load_local_all;
 use portage_providers::{HostOverlays, LocalProvider, Provider};
 
-use super::init::default_data_dir;
+use super::init::checked_data_dir;
 
 /// Arguments for `portage capacity`.
 #[derive(Args)]
@@ -23,10 +23,7 @@ pub struct CapacityArgs {
 
 /// Run `portage capacity`.
 pub fn run(args: &CapacityArgs, verbose: bool) -> Result<()> {
-    let dir = match &args.data_dir {
-        Some(p) => p.clone(),
-        None => default_data_dir()?,
-    };
+    let dir = checked_data_dir(args.data_dir.as_deref())?;
     let _guard = portage_core::obs::init_tracing(&dir, verbose)
         .with_context(|| format!("initializing logging in {}", dir.display()))?;
     let cat = Catalog::open(&dir, LockMode::Exclusive)
@@ -45,13 +42,15 @@ pub fn run(args: &CapacityArgs, verbose: bool) -> Result<()> {
         }
         println!("{title}:");
         for p in group {
-            print_one(&cat, p);
+            print_one(&cat, p)?;
         }
     }
     Ok(())
 }
 
-fn print_one(cat: &Catalog, p: &LocalProvider) {
+/// Offline volumes are reported and skipped; any other probe or snapshot
+/// failure (catalog disk full, I/O error) fails the command.
+fn print_one(cat: &Catalog, p: &LocalProvider) -> Result<()> {
     let c = p.config();
     match record_capacity(cat, p) {
         Ok(cap) => println!(
@@ -66,10 +65,12 @@ fn print_one(cat: &Catalog, p: &LocalProvider) {
             c.root.display()
         ),
         // Offline is reported, never guessed: no snapshot is written.
-        Err(err) => println!(
+        Err(err @ Error::VolumeOffline { .. }) => println!(
             "  {:<16} {:<12} OFFLINE  {err}",
             p.id().as_str(),
             c.volume_serial
         ),
+        Err(err) => return Err(err).with_context(|| format!("measuring capacity of {}", p.id())),
     }
+    Ok(())
 }

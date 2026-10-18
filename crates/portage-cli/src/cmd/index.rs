@@ -10,7 +10,7 @@ use portage_engine::index::index_local;
 use portage_providers::registry::{load_local, load_local_all};
 use portage_providers::{HostOverlays, Provider};
 
-use super::init::default_data_dir;
+use super::init::checked_data_dir;
 
 /// Arguments for `portage index`.
 #[derive(Args)]
@@ -26,10 +26,7 @@ pub struct IndexArgs {
 
 /// Run `portage index`.
 pub fn run(args: &IndexArgs, verbose: bool) -> Result<()> {
-    let dir = match &args.data_dir {
-        Some(p) => p.clone(),
-        None => default_data_dir()?,
-    };
+    let dir = checked_data_dir(args.data_dir.as_deref())?;
     let _guard = portage_core::obs::init_tracing(&dir, verbose)
         .with_context(|| format!("initializing logging in {}", dir.display()))?;
     let cat = Catalog::open(&dir, LockMode::Exclusive)

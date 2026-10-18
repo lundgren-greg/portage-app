@@ -8,7 +8,7 @@ use portage_catalog::{Catalog, LockMode};
 use portage_providers::registry::{add_local, default_local_id};
 use portage_providers::{HostOverlays, Provider, Role};
 
-use super::init::default_data_dir;
+use super::init::checked_data_dir;
 
 /// Arguments for `portage provider`.
 #[derive(Args)]
@@ -73,10 +73,7 @@ pub fn run(args: &ProviderArgs, verbose: bool) -> Result<()> {
 }
 
 fn add_local_cmd(args: &AddLocalArgs, verbose: bool) -> Result<()> {
-    let dir = match &args.data_dir {
-        Some(p) => p.clone(),
-        None => default_data_dir()?,
-    };
+    let dir = checked_data_dir(args.data_dir.as_deref())?;
     let _guard = portage_core::obs::init_tracing(&dir, verbose)
         .with_context(|| format!("initializing logging in {}", dir.display()))?;
     let cat = Catalog::open(&dir, LockMode::Exclusive)

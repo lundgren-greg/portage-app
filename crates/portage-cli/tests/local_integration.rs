@@ -95,6 +95,53 @@ fn bad_role_and_missing_provider_fail() {
     assert!(!out.status.success());
 }
 
+#[test]
+fn capacity_reports_offline_volume_and_still_succeeds() {
+    let files = tree();
+    let data = TempDir::new().unwrap();
+    let root = files.path().join("clips");
+    let add = ["provider", "add", "local", "--root", root.to_str().unwrap()];
+    ok(&run(&add, data.path()));
+    std::fs::remove_dir_all(&root).unwrap();
+    let text = ok(&run(&["capacity"], data.path()));
+    assert!(text.contains("OFFLINE"), "{text}");
+}
+
+/// Every command that writes into the data dir refuses one inside an
+/// overlay before creating anything — including `.` from inside it.
+/// `LOCALAPPDATA` is pointed at a temp dir, so its `Google\DriveFS` cache
+/// overlay is synthetic.
+#[cfg(windows)]
+#[test]
+fn data_dir_inside_overlay_is_refused_by_every_command() {
+    let files = tree();
+    let lad = TempDir::new().unwrap();
+    let cache = lad.path().join(r"Google\DriveFS\sub");
+    std::fs::create_dir_all(&cache).unwrap();
+    let root = files.path().to_str().unwrap();
+    let commands: [&[&str]; 5] = [
+        &["init"],
+        &["provider", "add", "local", "--root", root],
+        &["index"],
+        &["capacity"],
+        &["doctor"],
+    ];
+    for args in commands {
+        let out = portage()
+            .env("LOCALAPPDATA", lad.path())
+            .current_dir(&cache)
+            .args(args)
+            .args(["--data-dir", "."])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{args:?} succeeded");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("refusing data_dir"), "{args:?}: {err}");
+        let created: Vec<_> = std::fs::read_dir(&cache).unwrap().collect();
+        assert!(created.is_empty(), "{args:?} created {created:?}");
+    }
+}
+
 /// The DriveFS cache is always an overlay. The refusal is lexical, so the
 /// (possibly real) DriveFS directory is never touched.
 #[cfg(windows)]

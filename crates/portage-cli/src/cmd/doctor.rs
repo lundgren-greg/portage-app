@@ -13,7 +13,7 @@ use portage_providers::local::sync_roots::{Detector, InstalledSyncClients, Overl
 use portage_providers::registry::load_local_all;
 use portage_providers::{HostOverlays, LocalConfig, Provider};
 
-use super::init::default_data_dir;
+use super::init::checked_data_dir;
 
 /// Arguments for `portage doctor`.
 #[derive(Args)]
@@ -72,10 +72,7 @@ pub fn overlay_problems(
 
 /// Run `portage doctor`.
 pub fn run(args: &DoctorArgs, verbose: bool) -> Result<()> {
-    let dir = match &args.data_dir {
-        Some(p) => p.clone(),
-        None => default_data_dir()?,
-    };
+    let dir = checked_data_dir(args.data_dir.as_deref())?;
     let _guard = portage_core::obs::init_tracing(&dir, verbose)
         .with_context(|| format!("initializing logging in {}", dir.display()))?;
 
