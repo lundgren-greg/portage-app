@@ -338,6 +338,11 @@ impl LocalProvider {
         &self.config
     }
 
+    /// Every overlay root this provider knows about (skipped if inside root).
+    pub fn overlays(&self) -> &[OverlayRoot] {
+        &self.overlays
+    }
+
     /// `locations.id`: `<provider>@<volume serial>`.
     pub fn location_id(&self) -> String {
         location_id(self.id.as_str(), &self.config.volume_serial)

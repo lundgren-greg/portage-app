@@ -527,7 +527,12 @@ dependencies = [
 name = "portage-engine"
 version = "0.1.0"
 dependencies = [
+ "portage-catalog",
  "portage-core",
+ "portage-providers",
+ "tempfile",
+ "time",
+ "tracing",
 ]
 
 [[package]]
