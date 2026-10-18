@@ -42,7 +42,7 @@ Ship a Windows-first tool (`portage` CLI, then `portage-tui`, plus `portage ask`
 ## Next steps (ordered)
 
 1. Open the PR for `lundgren-greg/pr4-local-provider` (supersedes #13; close #13), get CI green on windows + ubuntu + coverage, run `pr-review-loop`, merge.
-2. Then **PR 5** — incremental BLAKE3 of `LocalFull` files and duplicate groups. It builds on `files.ntfs_file_id + size + mtime` and `Catalog::upsert_scanned_files` from PR 4.
+2. Then **PR 5** — incremental BLAKE3 of `LocalFull` files and duplicate groups. It builds on `files.ntfs_file_id + size + mtime` and `Catalog::upsert_scanned_files` from PR 4. **PR 5 must also reconcile re-scans** (deferred from PR 4 review, Copilot on #15): after a *complete* scan (`ScanStatus::Ok`, zero unreadable subtrees), rows of that location whose `last_scan_id` is older (deleted / renamed files, paths newly inside an overlay) must stop counting as replicas before any hash flips a replica to `verified`. Unreadable subtrees are not confirmed deletions. Add deletion and newly-excluded-overlay re-scan tests. Safe to defer only because PR 4 replicas are all `suspect` / `partial` and never count toward last-copy.
 3. Follow PRs 6–13 exactly as written. **No-data-loss P0** (apply + undo refuse) before TUI/NL. Merge gates for planner PRs: P-space and P-last-copy tests. Every PR: unit tests + ≥1 integration test per touched boundary.
 4. PR 14 polish → PR 15 `portage-tui` → PR 16 `portage ask` (clarify-then-plan agent, local or online).
 5. Keep this file's **Stopped at** current.
@@ -152,6 +152,7 @@ cargo test --workspace
 | 2026-08-15 | Observability: structured **JSON-lines logs** + **Prometheus-text metrics snapshot**, local files only (Grafana Alloy/Loki/textfile-collector friendly). No listener, no push, no telemetry. New **PR 1.5**. |
 | 2026-08-15 | Testing: CI `cargo llvm-cov` gate ≥80% on core/catalog/engine; every PR ships unit tests + ≥1 integration test per touched boundary; redaction tests merge-blocking. |
 | 2026-10-18 | PR 4: `Provider` is synchronous for now (local FS only); becomes async with the HTTP providers (PR 6+). `windows-sys` is used for Win32 calls. Local `locations.id` = `<provider>@<volume serial>`; paths are provider-root-relative. Overlapping local roots on one volume are refused. Placeholders keep PR 3's `partial` replica (never last-copy). `doctor` fails on a fresh catalog when OneDrive/DriveFS is installed until `provider add local` / `index` registers overlays. |
+| 2026-10-18 | PR 4 review round 2: the local walk is a hand-rolled depth-first walk (not `walkdir`, which opens a directory before yielding it) so overlay / placeholder / link / other-filesystem checks run before `read_dir`. A local provider id is bound to one volume serial and one volume-relative root; re-add may change roles or follow a drive-letter move only. Every CLI command runs `checked_data_dir` (resolved, canonicalized, K6-checked) before creating anything in the data dir. |
 | 2026-08-15 | **Dedupe semantics (user):** consolidating duplicates across providers = one verified copy at the desired destination, evict redundant **local/USB** replicas in R1. Deleting the redundant **cloud** copy stays **R2** (`--allow-cloud-delete`, last-copy gated). |
 
 ---
