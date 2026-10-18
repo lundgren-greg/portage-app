@@ -358,3 +358,39 @@ fn stat_and_open_refuse_overlays_and_intermediate_links() {
         assert_eq!(buf, b"aaaa");
     }
 }
+
+/// Win32 resolves aliases of a name on disk: a trailing dot or space is
+/// stripped and an 8.3 short name maps to the long name. None of them may
+/// reach an overlay through `stat` / `open_read`.
+#[cfg(windows)]
+#[test]
+fn stat_and_open_refuse_name_aliases_of_an_overlay() {
+    let files = tree();
+    let host = host_with_overlay(files.path());
+    let (_db, cat) = catalog();
+    let p = add_local(&cat, "local-tmp", files.path(), None, &host).unwrap();
+
+    let mut aliases = vec![
+        "FakeOneDrive./inner/secret.mp4".to_string(),
+        "FakeOneDrive /inner/secret.mp4".to_string(),
+        "FakeOneDrive/inner./secret.mp4".to_string(),
+        "FakeOneDrive/inner/secret.mp4.".to_string(),
+    ];
+    // 8.3 names exist only if the volume generates them.
+    if files.path().join("FAKEON~1").exists() {
+        aliases.push("FAKEON~1/inner/secret.mp4".to_string());
+    }
+    for alias in &aliases {
+        assert!(p.stat(alias).is_err(), "stat({alias}) reached the overlay");
+        assert!(
+            p.open_read(alias).is_err(),
+            "open_read({alias}) reached the overlay"
+        );
+    }
+
+    // Aliases of an ordinary file are refused too; the real name, in any
+    // case, still works.
+    assert!(p.stat("clips./b.mkv").is_err());
+    assert!(p.stat("clips/b.mkv ").is_err());
+    assert_eq!(p.stat("CLIPS/B.MKV").unwrap().size, Some(2));
+}

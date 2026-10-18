@@ -451,6 +451,18 @@ impl LocalProvider {
                 return Err(Error::WouldHydrate { path: current });
             }
             current.push(part);
+            // Win32 name aliases (`name.`, `NAME~1`) would otherwise
+            // reach an overlay the text check above did not match.
+            match alias_of_on_disk_name(&current, part) {
+                Ok(None) => {}
+                Ok(Some(reason)) => return Err(escape(reason)),
+                Err(source) => {
+                    return Err(Error::Io {
+                        path: current,
+                        source,
+                    })
+                }
+            }
             meta = lstat(&current)?;
             if meta.file_type().is_symlink() {
                 return Err(refuse(&current, "is (under) a symlink or junction"));
@@ -621,6 +633,36 @@ impl LocalProvider {
         };
         walk.push_dir(&root, entries);
         Ok(walk)
+    }
+}
+
+/// `Some(reason)` if `part`, the last component of `path`, is not literally
+/// the name stored on disk (case aside). Windows strips a trailing dot or
+/// space and maps 8.3 short names to long names, so such a part names some
+/// other entry than its text says. Unix names are literal.
+fn alias_of_on_disk_name(
+    path: &Path,
+    part: &std::ffi::OsStr,
+) -> std::io::Result<Option<&'static str>> {
+    #[cfg(windows)]
+    {
+        let text = part.to_string_lossy();
+        // Wildcards are not legal in a name and would make the lookup a search.
+        if text.contains(['*', '?', '<', '>', '"']) {
+            return Ok(Some("contains a wildcard character"));
+        }
+        let real = win::on_disk_name(path)?;
+        if real != part && real.to_string_lossy().to_lowercase() != text.to_lowercase() {
+            return Ok(Some(
+                "is not the name on disk (trailing dot or space, or an 8.3 short name)",
+            ));
+        }
+        Ok(None)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, part);
+        Ok(None)
     }
 }
 

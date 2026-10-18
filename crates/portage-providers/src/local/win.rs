@@ -1,14 +1,15 @@
 //! Win32 helpers: read-only HKCU registry reader and metadata-only handles.
 
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
+use std::ffi::{OsStr, OsString};
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, OPEN_EXISTING,
+    CreateFileW, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
+    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    OPEN_EXISTING, WIN32_FIND_DATAW,
 };
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
@@ -92,6 +93,38 @@ pub(crate) fn handle_identity(file: &std::fs::File) -> Option<(u32, String)> {
         info.dwFileAttributes,
         format!("{:08x}{:08x}", info.nFileIndexHigh, info.nFileIndexLow),
     ))
+}
+
+/// The long name on disk of the last component of `path`, from enumerating
+/// its parent directory (no handle to the object itself is opened). Win32
+/// resolves aliases here, so `name.` or an 8.3 `NAME~1` comes back as the
+/// real name. The caller must reject wildcard characters first.
+pub(crate) fn on_disk_name(path: &Path) -> std::io::Result<OsString> {
+    let wide = to_wide(path.as_os_str());
+    // SAFETY: zeroed POD out-struct.
+    let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
+    // SAFETY: NUL-terminated path; out-struct valid; no filter or flags.
+    let raw = unsafe {
+        FindFirstFileExW(
+            wide.as_ptr(),
+            FindExInfoBasic,
+            &mut data as *mut _ as *mut core::ffi::c_void,
+            FindExSearchNameMatch,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: valid search handle from FindFirstFileExW.
+    unsafe { FindClose(raw) };
+    let len = data
+        .cFileName
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(data.cFileName.len());
+    Ok(OsString::from_wide(&data.cFileName[..len]))
 }
 
 /// Read-only `HKEY_CURRENT_USER`.
