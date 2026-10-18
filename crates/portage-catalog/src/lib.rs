@@ -9,6 +9,7 @@ pub mod db;
 pub mod files;
 pub mod journal;
 pub mod lock;
+pub mod overlays;
 pub mod plans;
 pub mod providers;
 pub mod replicas;
@@ -18,6 +19,8 @@ pub mod types;
 pub use db::{Catalog, CatalogCounts, IntegrityReport, CURRENT_SCHEMA_VERSION};
 pub use files::{InsertedFile, NewChecksum, NewFile};
 pub use lock::{CatalogLock, LockMode};
+pub use overlays::OverlayRootRow;
+pub use providers::ProviderRow;
 pub use types::{
     BlobRow, CapacitySnapshot, FileKind, FileRow, Hydration, LocationKind, ProviderKind,
     ReplicaRow, ReplicaState, ScanStatus,

@@ -43,6 +43,41 @@ pub(crate) fn insert(
     })
 }
 
+pub(crate) fn for_file(
+    conn: &rusqlite::Connection,
+    file_id: i64,
+) -> Result<Option<ReplicaRow>, Error> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT id, blob_id, file_id, state FROM replicas WHERE file_id = ?1",
+        [file_id],
+        map_replica_row,
+    )
+    .optional()
+    .map_err(map_sql)
+}
+
+/// Point a replica at a new (proto-)blob with a new state.
+pub(crate) fn reset(
+    tx: &rusqlite::Transaction<'_>,
+    replica_id: i64,
+    blob_id: BlobId,
+    state: ReplicaState,
+) -> Result<(), Error> {
+    tx.execute(
+        "UPDATE replicas SET blob_id = ?1, state = ?2 WHERE id = ?3",
+        rusqlite::params![blob_id.0, state.as_str(), replica_id],
+    )
+    .map_err(map_sql)?;
+    Ok(())
+}
+
+pub(crate) fn delete(tx: &rusqlite::Transaction<'_>, replica_id: i64) -> Result<(), Error> {
+    tx.execute("DELETE FROM replicas WHERE id = ?1", [replica_id])
+        .map_err(map_sql)?;
+    Ok(())
+}
+
 fn map_replica_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReplicaRow> {
     let state: String = row.get(3)?;
     Ok(ReplicaRow {
