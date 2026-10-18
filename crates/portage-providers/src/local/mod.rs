@@ -293,8 +293,18 @@ pub fn resolve_root_with(
     probed: Option<&VolumeInfo>,
     mounted: &[VolumeInfo],
 ) -> Result<Resolved, Error> {
+    let offline = || Error::VolumeOffline {
+        label: config.volume_label.clone(),
+        serial: config.volume_serial.clone(),
+        root: config.root.clone(),
+    };
     if let Some(v) = probed {
         if v.serial.eq_ignore_ascii_case(&config.volume_serial) {
+            // A serial collision with a DriveFS / Cloud Filter volume is
+            // never our disk, wherever it is mounted.
+            if v.cloud_volume_reason().is_some() {
+                return Err(offline());
+            }
             return Ok(Resolved {
                 root: config.root.clone(),
                 mount: v.mount.clone(),
@@ -302,11 +312,6 @@ pub fn resolve_root_with(
             });
         }
     }
-    let offline = || Error::VolumeOffline {
-        label: config.volume_label.clone(),
-        serial: config.volume_serial.clone(),
-        root: config.root.clone(),
-    };
     let found =
         volume::find_mount_for_serial(&config.volume_serial, mounted).ok_or_else(offline)?;
     if found.cloud_volume_reason().is_some() {
@@ -791,7 +796,14 @@ mod tests {
         let mut fake = vol(r"G:\", "BBBB-0002", "Google Drive", DriveType::Fixed);
         fake.fs_name = "FAT32".into();
         assert!(matches!(
-            resolve_root_with(&c, None, &[fake]),
+            resolve_root_with(&c, None, std::slice::from_ref(&fake)),
+            Err(Error::VolumeOffline { .. })
+        ));
+        // Same collision at the recorded letter (the serial fast path).
+        let mut at_e = fake.clone();
+        at_e.mount = PathBuf::from(r"E:\");
+        assert!(matches!(
+            resolve_root_with(&c, Some(&at_e), &[]),
             Err(Error::VolumeOffline { .. })
         ));
     }
