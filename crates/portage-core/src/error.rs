@@ -71,4 +71,36 @@ pub enum Error {
         /// Highest version this binary knows how to open.
         supported: i32,
     },
+
+    /// A local root is (or sits inside) a cloud overlay / sync root, or on a
+    /// DriveFS / Cloud Filter volume. Add the cloud provider instead (K6).
+    #[error("{} is a cloud overlay ({reason}); use `portage provider add google-drive` / `onedrive` instead", path.display())]
+    OverlayRoot {
+        /// The refused path.
+        path: PathBuf,
+        /// Which detector matched.
+        reason: String,
+    },
+
+    /// A volume a provider needs is not mounted. Fail closed (K24).
+    #[error("volume offline: {label} (serial {serial}) expected at {}", root.display())]
+    VolumeOffline {
+        /// Volume label recorded at `provider add`.
+        label: String,
+        /// Volume serial recorded at `provider add`.
+        serial: String,
+        /// Last known root.
+        root: PathBuf,
+    },
+
+    /// Opening this file would hydrate a cloud placeholder (K6).
+    #[error("refusing to open placeholder {} (would hydrate)", path.display())]
+    WouldHydrate {
+        /// The placeholder path.
+        path: PathBuf,
+    },
+
+    /// A provider is misconfigured (bad root, role, or stored config).
+    #[error("provider config: {0}")]
+    ProviderConfig(String),
 }
