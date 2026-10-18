@@ -13,6 +13,7 @@ pub mod volume;
 #[cfg(windows)]
 pub mod win;
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
@@ -400,9 +401,13 @@ impl LocalProvider {
         self.config.volume_mount = resolved.mount.clone();
     }
 
-    /// `rel` joined onto the *resolved* root. Resolving first means a
-    /// different disk now mounted at the old letter is never read (K24).
-    fn full_path(&self, rel: &str) -> Result<(PathBuf, PathBuf), Error> {
+    /// `rel` resolved for `stat` / `open_read`: the volume is resolved once
+    /// (a different disk at the old letter is never read, K24), the path
+    /// must not be (inside) an overlay (K6), and every component from the
+    /// root down is `lstat`ed: a symlink / junction anywhere, a placeholder
+    /// directory on the way, or (Unix) another filesystem is refused.
+    /// Returns `(full path, metadata of the final component)`.
+    fn checked(&self, rel: &str) -> Result<(PathBuf, std::fs::Metadata), Error> {
         let root = self.resolve()?.root;
         let escape = |reason: &str| Error::PathEscape {
             root: root.clone(),
@@ -420,7 +425,41 @@ impl LocalProvider {
             }
         }
         let full = root.join(candidate);
-        Ok((root, full))
+        let refuse = |path: &Path, reason: &str| Error::OverlayRoot {
+            path: path.to_path_buf(),
+            reason: reason.to_string(),
+        };
+        // Overlay trees belong to their cloud provider; never touch them.
+        if self.in_overlay(&full) {
+            return Err(refuse(&full, "inside an overlay root"));
+        }
+        let lstat = |p: &Path| {
+            std::fs::symlink_metadata(p).map_err(|source| Error::Io {
+                path: p.to_path_buf(),
+                source,
+            })
+        };
+        let root_meta = lstat(&root)?;
+        let mut current = root.clone();
+        let mut meta = root_meta.clone();
+        for part in candidate.components() {
+            let Component::Normal(part) = part else {
+                continue;
+            };
+            // The previous component is about to be traversed.
+            if placeholder::hydration_of(&meta) != Hydration::LocalFull {
+                return Err(Error::WouldHydrate { path: current });
+            }
+            current.push(part);
+            meta = lstat(&current)?;
+            if meta.file_type().is_symlink() {
+                return Err(refuse(&current, "is (under) a symlink or junction"));
+            }
+            if !same_filesystem(&root_meta, &meta) {
+                return Err(refuse(&current, "is on another mounted filesystem"));
+            }
+        }
+        Ok((full, meta))
     }
 
     /// True if `path` is (inside) any known overlay root (K6).
@@ -506,49 +545,17 @@ impl Provider for LocalProvider {
     }
 
     fn list(&self) -> Result<Box<dyn Iterator<Item = ListItem> + '_>, Error> {
-        let resolved = self.resolve()?;
-        let skip: Vec<String> = self.overlays.iter().map(|o| path_str(&o.path)).collect();
-        let it = walkdir::WalkDir::new(&resolved.root)
-            .follow_links(false)
-            .sort_by_file_name()
-            .into_iter();
-        Ok(Box::new(LocalWalk {
-            it,
-            root: resolved.root,
-            skip,
-            provider: self,
-        }))
+        Ok(Box::new(self.walk()?))
     }
 
     fn stat(&self, path: &str) -> Result<ObjectMeta, Error> {
-        let (_, full) = self.full_path(path)?;
-        let meta = std::fs::symlink_metadata(&full).map_err(|source| Error::Io {
-            path: full.clone(),
-            source,
-        })?;
+        let (full, meta) = self.checked(path)?;
         Ok(self.meta_for(path, &full, &meta))
     }
 
     fn open_read(&self, path: &str) -> Result<Box<dyn Read + Send>, Error> {
-        let (root, full) = self.full_path(path)?;
-        let refuse = |reason: &str| Error::OverlayRoot {
-            path: full.clone(),
-            reason: reason.to_string(),
-        };
-        // Overlay trees belong to their cloud provider; never open them (K6).
-        if self.in_overlay(&full) {
-            return Err(refuse("inside an overlay root"));
-        }
+        let (full, raw) = self.checked(path)?;
         // Classify from metadata first; a placeholder is never opened.
-        let raw = std::fs::symlink_metadata(&full).map_err(|source| Error::Io {
-            path: full.clone(),
-            source,
-        })?;
-        // `File::open` follows links, so the attributes checked below would
-        // be the link's, not the target's. The walk skips links; so does this.
-        if raw.file_type().is_symlink() {
-            return Err(refuse("is a symlink or junction"));
-        }
         let meta = self.meta_for(path, &full, &raw);
         if meta.hydration != Hydration::LocalFull {
             return Err(Error::WouldHydrate { path: full });
@@ -559,28 +566,202 @@ impl Provider for LocalProvider {
                 source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "is a directory"),
             });
         }
-        let checked = portage_core::paths::ensure_inside(&root, Path::new(path))?;
-        // An intermediate junction may resolve into an overlay.
-        if let Ok(real) = checked.canonicalize() {
-            if self.in_overlay(&strip_verbatim(real)) {
-                return Err(refuse("resolves into an overlay root"));
-            }
-        }
-        let file = File::open(&checked).map_err(|source| Error::Io {
-            path: checked,
+        let file = open_no_follow(&full).map_err(|source| Error::Io {
+            path: full.clone(),
             source,
         })?;
+        // The path may have been swapped since it was checked: the handle
+        // must be the very object classified above, and still not a
+        // reparse point or placeholder.
+        if !opened_matches(&file, &raw, meta.file_id.as_deref()) {
+            return Err(Error::OverlayRoot {
+                path: full,
+                reason: "changed between check and open".into(),
+            });
+        }
         Ok(Box::new(file))
     }
 }
 
-/// Iterator over a local tree. Skips overlays and links; never follows
-/// reparse points; does not descend into placeholder directories.
+impl LocalProvider {
+    /// The walk behind [`Provider::list`]. The root is checked like any
+    /// other directory before it is opened.
+    fn walk(&self) -> Result<LocalWalk<'_>, Error> {
+        let root = self.resolve()?.root;
+        if self.in_overlay(&root) {
+            return Err(Error::OverlayRoot {
+                path: root,
+                reason: "root is inside an overlay".into(),
+            });
+        }
+        let io = |source| Error::Io {
+            path: root.clone(),
+            source,
+        };
+        let meta = std::fs::symlink_metadata(&root).map_err(io)?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::OverlayRoot {
+                path: root,
+                reason: "root is a symlink or junction".into(),
+            });
+        }
+        if placeholder::hydration_of(&meta) != Hydration::LocalFull {
+            return Err(Error::WouldHydrate { path: root });
+        }
+        let entries = std::fs::read_dir(&root).map_err(io)?;
+        let mut walk = LocalWalk {
+            skip: self.overlays.iter().map(|o| path_str(&o.path)).collect(),
+            root: root.clone(),
+            root_meta: meta,
+            stack: Vec::new(),
+            pending: VecDeque::new(),
+            provider: self,
+            #[cfg(test)]
+            opened: Vec::new(),
+        };
+        walk.push_dir(&root, entries);
+        Ok(walk)
+    }
+}
+
+/// True if `b` is on the same filesystem as `a`. Windows mount points are
+/// reparse points and are already skipped as links.
+fn same_filesystem(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (a, b);
+        true
+    }
+}
+
+/// Open for reading without following a final-component link. On Windows
+/// `FILE_FLAG_OPEN_REPARSE_POINT` opens a link (or a cloud reparse point)
+/// itself rather than what it points at; [`opened_matches`] then rejects it.
+fn open_no_follow(path: &Path) -> std::io::Result<File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    opts.open(path)
+}
+
+/// The opened handle is the object `expected` / `expected_id` described:
+/// same file identity and, on Windows, no reparse / recall / offline bits.
+fn opened_matches(file: &File, expected: &std::fs::Metadata, expected_id: Option<&str>) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = expected;
+        match (win::handle_identity(file), expected_id) {
+            (Some((attributes, id)), Some(want)) => {
+                id == want
+                    && placeholder::classify_attributes(attributes, false) == Hydration::LocalFull
+            }
+            _ => false,
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let _ = expected_id;
+        file.metadata()
+            .is_ok_and(|m| m.is_file() && m.dev() == expected.dev() && m.ino() == expected.ino())
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (file, expected, expected_id);
+        false
+    }
+}
+
+/// Depth-first walk of a local tree in name order. Every entry is
+/// classified from directory-enumeration metadata (no handle is opened),
+/// and a directory is handed to `read_dir` only after it passed the
+/// overlay, link, placeholder, and same-filesystem checks, so an overlay or
+/// placeholder directory is never opened or enumerated.
 struct LocalWalk<'a> {
-    it: walkdir::IntoIter,
     root: PathBuf,
+    root_meta: std::fs::Metadata,
     skip: Vec<String>,
+    /// Sorted, not-yet-visited entries of each open directory level.
+    stack: Vec<std::vec::IntoIter<std::fs::DirEntry>>,
+    /// Errors to report before continuing.
+    pending: VecDeque<ListItem>,
     provider: &'a LocalProvider,
+    /// Every directory passed to `read_dir`, for tests.
+    #[cfg(test)]
+    opened: Vec<PathBuf>,
+}
+
+impl LocalWalk<'_> {
+    fn push_dir(&mut self, dir: &Path, entries: std::fs::ReadDir) {
+        #[cfg(test)]
+        self.opened.push(dir.to_path_buf());
+        let mut ok = Vec::new();
+        for e in entries {
+            match e {
+                Ok(e) => ok.push(e),
+                Err(err) => self.pending.push_back(ListItem::Unreadable {
+                    path: dir.to_path_buf(),
+                    message: err.to_string(),
+                }),
+            }
+        }
+        ok.sort_by_key(|e| e.file_name());
+        self.stack.push(ok.into_iter());
+    }
+
+    fn visit(&mut self, entry: std::fs::DirEntry) -> ListItem {
+        let path = entry.path();
+        let unreadable = |path: PathBuf, err: std::io::Error| ListItem::Unreadable {
+            path,
+            message: err.to_string(),
+        };
+        let ps = path_str(&path);
+        if self
+            .skip
+            .iter()
+            .any(|o| is_within(&ps, o, HOST_CASE_INSENSITIVE))
+        {
+            return ListItem::SkippedOverlay(path);
+        }
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(err) => return unreadable(path, err),
+        };
+        if file_type.is_symlink() {
+            return ListItem::SkippedLink(path);
+        }
+        // Directory-enumeration metadata: no file handle is opened.
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(err) => return unreadable(path, err),
+        };
+        if !same_filesystem(&self.root_meta, &meta) {
+            return ListItem::SkippedMount(path);
+        }
+        let Some(rel) = relative(&self.root, &path) else {
+            return ListItem::Unreadable {
+                path,
+                message: "name is not valid UTF-8".into(),
+            };
+        };
+        // Only now, with every check passed, is the directory opened.
+        if meta.is_dir() && placeholder::hydration_of(&meta) == Hydration::LocalFull {
+            match std::fs::read_dir(&path) {
+                Ok(entries) => self.push_dir(&path, entries),
+                Err(err) => self.pending.push_back(unreadable(path.clone(), err)),
+            }
+        }
+        ListItem::Entry(self.provider.meta_for(&rel, &path, &meta))
+    }
 }
 
 impl Iterator for LocalWalk<'_> {
@@ -588,57 +769,15 @@ impl Iterator for LocalWalk<'_> {
 
     fn next(&mut self) -> Option<ListItem> {
         loop {
-            let entry = match self.it.next()? {
-                Ok(e) => e,
-                Err(err) => {
-                    return Some(ListItem::Unreadable {
-                        path: err.path().map(Path::to_path_buf).unwrap_or_default(),
-                        message: err.to_string(),
-                    })
+            if let Some(item) = self.pending.pop_front() {
+                return Some(item);
+            }
+            match self.stack.last_mut()?.next() {
+                Some(entry) => return Some(self.visit(entry)),
+                None => {
+                    self.stack.pop();
                 }
-            };
-            if entry.depth() == 0 {
-                continue;
             }
-            let path = entry.path().to_path_buf();
-            let ps = path_str(&path);
-            if self
-                .skip
-                .iter()
-                .any(|o| is_within(&ps, o, HOST_CASE_INSENSITIVE))
-            {
-                if entry.file_type().is_dir() {
-                    self.it.skip_current_dir();
-                }
-                return Some(ListItem::SkippedOverlay(path));
-            }
-            if entry.path_is_symlink() || entry.file_type().is_symlink() {
-                return Some(ListItem::SkippedLink(path));
-            }
-            // Directory-enumeration metadata: no file handle is opened.
-            let meta = match entry.metadata() {
-                Ok(m) => m,
-                Err(err) => {
-                    return Some(ListItem::Unreadable {
-                        path,
-                        message: err.to_string(),
-                    })
-                }
-            };
-            let hydration = placeholder::hydration_of(&meta);
-            // Skip at most once per entry: a second `skip_current_dir` would
-            // drop the parent's remaining siblings.
-            let rel = relative(&self.root, &path);
-            if meta.is_dir() && (hydration != Hydration::LocalFull || rel.is_none()) {
-                self.it.skip_current_dir();
-            }
-            let Some(rel) = rel else {
-                return Some(ListItem::Unreadable {
-                    path,
-                    message: "name is not valid UTF-8".into(),
-                });
-            };
-            return Some(ListItem::Entry(self.provider.meta_for(&rel, &path, &meta)));
         }
     }
 }
@@ -815,6 +954,52 @@ mod tests {
         let r = resolve_root_with(&c, None, &[moved]).unwrap();
         assert_eq!(r.root, PathBuf::from("/media/new/clips"));
         assert!(r.moved);
+    }
+
+    #[test]
+    fn walk_checks_each_directory_before_opening_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = strip_verbatim(tmp.path().canonicalize().unwrap());
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::create_dir_all(root.join("Overlay/inner")).unwrap();
+        std::fs::write(root.join("a/b/f.mp4"), b"x").unwrap();
+        std::fs::write(root.join("Overlay/inner/s.mp4"), b"x").unwrap();
+        let v = volume::probe(&root).unwrap();
+        let config = LocalConfig {
+            root: root.clone(),
+            roles: Role::Both,
+            volume_serial: v.serial,
+            volume_label: v.label,
+            volume_mount: v.mount,
+            removable: false,
+            bus: None,
+            drive_type: "fixed".into(),
+        };
+        let overlays = vec![OverlayRoot {
+            path: root.join("Overlay"),
+            provider_id: "overlay:onedrive".into(),
+            detector: Detector::OnedriveUserfolder,
+        }];
+        let p = LocalProvider::new(ProviderId::new("t"), config, overlays);
+        let mut walk = p.walk().unwrap();
+        let items: Vec<_> = walk.by_ref().collect();
+        // Only directories that passed the overlay / link / placeholder
+        // checks were ever handed to `read_dir`; the overlay never was.
+        let opened: Vec<_> = walk
+            .opened
+            .iter()
+            .map(|d| relative(&root, d).unwrap())
+            .collect();
+        assert_eq!(opened, vec!["", "a", "a/b"]);
+        let paths: Vec<_> = items
+            .iter()
+            .filter_map(|i| match i {
+                ListItem::Entry(m) => Some(m.path.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, vec!["a", "a/b", "a/b/f.mp4"]);
+        assert!(matches!(items[0], ListItem::SkippedOverlay(_)));
     }
 
     #[test]

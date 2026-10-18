@@ -49,13 +49,14 @@ pub fn run(args: &IndexArgs, verbose: bool) -> Result<()> {
                     println!("{}: volume moved, now at {}", p.id(), root.display());
                 }
                 println!(
-                    "{}: {} files, {} dirs, {} placeholders (not opened), {} overlays skipped, {} links skipped, {} unreadable  [scan {}]",
+                    "{}: {} files, {} dirs, {} placeholders (not opened), {} overlays skipped, {} links skipped, {} mounts skipped, {} unreadable  [scan {}]",
                     p.id(),
                     r.files,
                     r.dirs,
                     r.placeholders,
                     r.skipped_overlays,
                     r.skipped_links,
+                    r.skipped_mounts,
                     r.unreadable,
                     r.scan_id
                 );

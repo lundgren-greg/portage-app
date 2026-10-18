@@ -78,6 +78,22 @@ pub(crate) fn file_id(path: &Path) -> Option<String> {
     ))
 }
 
+/// `(attributes, file id)` of an already-open file, from the handle itself
+/// (so it describes the object being read, not whatever the path names now).
+pub(crate) fn handle_identity(file: &std::fs::File) -> Option<(u32, String)> {
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: zeroed POD out-struct.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `file` owns a valid handle for the duration of the call.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) } == 0 {
+        return None;
+    }
+    Some((
+        info.dwFileAttributes,
+        format!("{:08x}{:08x}", info.nFileIndexHigh, info.nFileIndexLow),
+    ))
+}
+
 /// Read-only `HKEY_CURRENT_USER`.
 pub struct WinRegistry;
 

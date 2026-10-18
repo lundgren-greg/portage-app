@@ -43,6 +43,9 @@ pub enum ListItem {
     SkippedOverlay(PathBuf),
     /// A symlink / junction; never followed.
     SkippedLink(PathBuf),
+    /// Another filesystem mounted inside the tree (Linux/macOS); not
+    /// descended. Its files belong to that volume's own provider (K24).
+    SkippedMount(PathBuf),
     /// Could not be read (permissions, vanished, non-UTF-8 name). Walk continues.
     Unreadable {
         /// Path that failed.

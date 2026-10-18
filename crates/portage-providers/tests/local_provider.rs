@@ -284,3 +284,77 @@ fn re_add_refuses_retargeting_an_id_but_allows_role_changes() {
     .unwrap();
     assert_eq!(p.config().roles, Role::Shuttle);
 }
+
+/// Link `link` -> directory `target` (junction on Windows).
+fn dir_link(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+}
+
+#[test]
+fn list_refuses_a_root_that_became_an_overlay() {
+    let files = tree();
+    let (_db, cat) = catalog();
+    let p = add_local(
+        &cat,
+        "local-tmp",
+        files.path(),
+        None,
+        &HostOverlays::default(),
+    )
+    .unwrap();
+    let canonical = strip_verbatim(files.path().canonicalize().unwrap());
+    let overlays = vec![portage_providers::local::sync_roots::OverlayRoot {
+        path: canonical,
+        provider_id: "overlay:onedrive".into(),
+        detector: portage_providers::local::sync_roots::Detector::OnedriveUserfolder,
+    }];
+    let p = portage_providers::LocalProvider::new(p.id().clone(), p.config().clone(), overlays);
+    assert!(matches!(p.list().err(), Some(Error::OverlayRoot { .. })));
+}
+
+#[test]
+fn stat_and_open_refuse_overlays_and_intermediate_links() {
+    let files = tree();
+    let host = host_with_overlay(files.path());
+    let (_db, cat) = catalog();
+    let p = add_local(&cat, "local-tmp", files.path(), None, &host).unwrap();
+
+    assert!(matches!(
+        p.stat("FakeOneDrive/inner/secret.mp4"),
+        Err(Error::OverlayRoot { .. })
+    ));
+
+    if dir_link(
+        &files.path().join("clips/2026"),
+        &files.path().join("clips/via"),
+    ) {
+        assert!(matches!(
+            p.stat("clips/via/a.mp4"),
+            Err(Error::OverlayRoot { .. })
+        ));
+        assert!(matches!(
+            p.open_read("clips/via/a.mp4").err(),
+            Some(Error::OverlayRoot { .. })
+        ));
+        // The real path still works.
+        assert_eq!(p.stat("clips/2026/a.mp4").unwrap().size, Some(4));
+        let mut buf = Vec::new();
+        p.open_read("clips/2026/a.mp4")
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+        assert_eq!(buf, b"aaaa");
+    }
+}

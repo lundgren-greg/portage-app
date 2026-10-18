@@ -36,6 +36,8 @@ pub struct IndexReport {
     pub skipped_overlays: u64,
     /// Symlinks / junctions skipped.
     pub skipped_links: u64,
+    /// Other filesystems mounted inside the tree, skipped (Linux/macOS).
+    pub skipped_mounts: u64,
     /// Entries that could not be read.
     pub unreadable: u64,
     /// New root if the volume moved to another drive letter.
@@ -132,6 +134,11 @@ fn walk(cat: &Catalog, provider: &LocalProvider, report: &mut IndexReport) -> Re
             }
             ListItem::SkippedLink(_) => {
                 report.skipped_links += 1;
+                continue;
+            }
+            ListItem::SkippedMount(path) => {
+                tracing::info!(path = %path.display(), "skipped nested mount (K24)");
+                report.skipped_mounts += 1;
                 continue;
             }
             ListItem::Unreadable { path, message } => {
