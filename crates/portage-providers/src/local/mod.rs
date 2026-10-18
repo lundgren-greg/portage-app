@@ -684,6 +684,8 @@ fn same_filesystem(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
 /// Open for reading without following a final-component link. On Windows
 /// `FILE_FLAG_OPEN_REPARSE_POINT` opens a link (or a cloud reparse point)
 /// itself rather than what it points at; [`opened_matches`] then rejects it.
+/// On Unix `O_NOFOLLOW` fails on a link, and `O_NONBLOCK` keeps a FIFO
+/// swapped in after the check from blocking before that rejection.
 fn open_no_follow(path: &Path) -> std::io::Result<File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.read(true);
@@ -691,6 +693,11 @@ fn open_no_follow(path: &Path) -> std::io::Result<File> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         opts.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     opts.open(path)
 }
@@ -1066,5 +1073,28 @@ mod tests {
         );
         assert_eq!(relative(root, Path::new("elsewhere")), None);
         assert_eq!(location_id("ext-media", "BBBB-0002"), "ext-media@BBBB-0002");
+    }
+
+    /// A path swapped for a link after the check is not followed, and a
+    /// swapped-in FIFO does not block the open (L1).
+    #[cfg(unix)]
+    #[test]
+    fn open_no_follow_refuses_links_and_does_not_block_on_fifos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target.txt");
+        std::fs::write(&target, b"x").unwrap();
+        let link = tmp.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(open_no_follow(&link).is_err());
+
+        let fifo = tmp.path().join("fifo");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        // Without O_NONBLOCK this blocks until a writer appears.
+        let file = open_no_follow(&fifo).unwrap();
+        let meta = std::fs::symlink_metadata(&target).unwrap();
+        assert!(!opened_matches(&file, &meta, None));
+        assert!(open_no_follow(&target).is_ok());
     }
 }
