@@ -16,6 +16,8 @@ clap = { workspace = true }
 fs2 = { workspace = true }
 portage-catalog = { path = "../portage-catalog" }
 portage-core = { path = "../portage-core" }
+portage-engine = { path = "../portage-engine" }
+portage-providers = { path = "../portage-providers" }
 time = { workspace = true }
 tracing = { workspace = true }
 

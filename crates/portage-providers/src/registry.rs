@@ -1,0 +1,225 @@
+//! Provider registry: persist configured providers in the catalog and load
+//! them back. PR 4 knows `local`; cloud kinds arrive with PRs 6–8.
+
+use std::path::Path;
+
+use portage_catalog::{Catalog, LocationKind, ProviderKind};
+use portage_core::ids::ProviderId;
+use portage_core::Error;
+
+use crate::local::pathcmp::{is_within, path_str, same_path, HOST_CASE_INSENSITIVE};
+use crate::local::sync_roots::OverlayRoot;
+use crate::local::volume::rebase_root;
+use crate::traits::Provider;
+
+use crate::local::{
+    location_id, prepare_local, HostOverlays, LocalConfig, LocalProvider, Resolved, Role,
+};
+
+/// Validate a provider id: 1–64 chars of `[a-z0-9_-]`.
+pub fn validate_provider_id(id: &str) -> Result<(), Error> {
+    let valid = |b: u8| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_');
+    if !id.is_empty() && id.len() <= 64 && id.bytes().all(valid) {
+        Ok(())
+    } else {
+        Err(Error::ProviderConfig(format!(
+            "provider id {id:?} must be 1-64 chars of a-z, 0-9, '-', '_'"
+        )))
+    }
+}
+
+/// Default id for a local root: `local-d` for `D:\…`, else `local-<name>`.
+pub fn default_local_id(root: &Path) -> String {
+    let s = path_str(root);
+    let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return format!("local-{}", (bytes[0] as char).to_ascii_lowercase());
+    }
+    let name: String = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let name = name.trim_matches('-');
+    if name.is_empty() {
+        "local-root".to_string()
+    } else {
+        format!("local-{name}")
+    }
+}
+
+/// Write every detected overlay root into `overlay_roots`. Returns the count.
+pub fn register_overlays(cat: &Catalog, roots: &[OverlayRoot]) -> Result<usize, Error> {
+    for r in roots {
+        cat.upsert_overlay_root(&path_str(&r.path), &r.provider_id, r.detector.as_str())?;
+    }
+    Ok(roots.len())
+}
+
+/// `portage provider add local`: K6-check the root, record volume serial,
+/// removable/bus flags and roles, register overlays, and persist.
+pub fn add_local(
+    cat: &Catalog,
+    id: &str,
+    root: &Path,
+    role: Option<Role>,
+    host: &HostOverlays,
+) -> Result<LocalProvider, Error> {
+    validate_provider_id(id)?;
+    let existing = match cat.provider(id)? {
+        Some(row) if row.kind != ProviderKind::Local => {
+            return Err(Error::ProviderConfig(format!(
+                "provider {id} already exists as {}",
+                row.kind
+            )))
+        }
+        Some(row) => Some(LocalConfig::from_json(&row.config_json)?),
+        None => None,
+    };
+    // Register overlays first: even a refused add leaves doctor informed.
+    register_overlays(cat, &host.roots)?;
+    let config = prepare_local(root, role, host)?;
+    if let Some(old) = &existing {
+        check_same_tree(id, old, &config)?;
+    }
+
+    for other in load_local_all(cat, host)? {
+        if other.id().as_str() == id {
+            continue;
+        }
+        let a = path_str(&config.root);
+        let b = path_str(&other.config().root);
+        let same_volume = other
+            .config()
+            .volume_serial
+            .eq_ignore_ascii_case(&config.volume_serial);
+        let ci = HOST_CASE_INSENSITIVE;
+        let overlaps = is_within(&a, &b, ci) || is_within(&b, &a, ci);
+        if same_volume && overlaps {
+            return Err(Error::ProviderConfig(format!(
+                "root {a} overlaps provider {} ({b}); one tree, one provider",
+                other.id()
+            )));
+        }
+    }
+
+    save_local(cat, id, &config)?;
+    let roots = host.roots.clone();
+    Ok(LocalProvider::new(ProviderId::new(id), config, roots))
+}
+
+/// Re-adding an id may change its roles or follow a drive-letter change, but
+/// not point it at another tree: the location id (`<id>@<serial>`) and every
+/// root-relative row under it would silently describe different files.
+fn check_same_tree(id: &str, old: &LocalConfig, new: &LocalConfig) -> Result<(), Error> {
+    if !old.volume_serial.eq_ignore_ascii_case(&new.volume_serial) {
+        return Err(Error::ProviderConfig(format!(
+            "provider {id} is recorded on volume {} but {} is on volume {}; \
+             use a new provider id for a different disk",
+            old.volume_serial,
+            new.root.display(),
+            new.volume_serial
+        )));
+    }
+    let ci = HOST_CASE_INSENSITIVE;
+    let same = rebase_root(&old.root, &old.volume_mount, &new.volume_mount)
+        .is_some_and(|r| same_path(&path_str(&r), &path_str(&new.root), ci));
+    if !same {
+        return Err(Error::ProviderConfig(format!(
+            "provider {id} has root {}; refusing to retarget it to {} \
+             (use a new provider id for a different directory)",
+            old.root.display(),
+            new.root.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Provider config and its location row, in one transaction: a failed
+/// location write leaves the previous config in place.
+fn save_local(cat: &Catalog, id: &str, config: &LocalConfig) -> Result<(), Error> {
+    cat.atomically(|cat| {
+        cat.upsert_provider_config(id, ProviderKind::Local, None, &config.to_json())?;
+        cat.upsert_location(
+            &location_id(id, &config.volume_serial),
+            id,
+            LocationKind::Volume,
+            Some(&config.volume_label),
+            Some(&path_str(&config.root)),
+        )
+    })
+}
+
+/// Persist a drive-letter change found by [`LocalProvider::resolve`].
+pub fn record_resolved(
+    cat: &Catalog,
+    provider: &mut LocalProvider,
+    resolved: &Resolved,
+) -> Result<(), Error> {
+    if resolved.moved {
+        provider.adopt(resolved);
+        save_local(cat, provider.id().as_str(), provider.config())?;
+    }
+    Ok(())
+}
+
+/// Load one local provider.
+pub fn load_local(cat: &Catalog, id: &str, host: &HostOverlays) -> Result<LocalProvider, Error> {
+    let row = cat
+        .provider(id)?
+        .ok_or_else(|| Error::ProviderConfig(format!("no provider {id:?}")))?;
+    if row.kind != ProviderKind::Local {
+        return Err(Error::ProviderConfig(format!(
+            "provider {id} is {}, not local",
+            row.kind
+        )));
+    }
+    Ok(LocalProvider::new(
+        ProviderId::new(row.id),
+        LocalConfig::from_json(&row.config_json)?,
+        host.roots.clone(),
+    ))
+}
+
+/// Load every local provider, ordered by id.
+pub fn load_local_all(cat: &Catalog, host: &HostOverlays) -> Result<Vec<LocalProvider>, Error> {
+    cat.providers()?
+        .into_iter()
+        .filter(|row| row.kind == ProviderKind::Local)
+        .map(|row| {
+            Ok(LocalProvider::new(
+                ProviderId::new(row.id),
+                LocalConfig::from_json(&row.config_json)?,
+                host.roots.clone(),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn provider_ids() {
+        for ok in ["local-d", "ext_media", "a", "x1"] {
+            validate_provider_id(ok).unwrap();
+        }
+        for bad in ["", "Local", "a b", "../x", &"a".repeat(65)] {
+            assert!(validate_provider_id(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn default_ids() {
+        assert_eq!(default_local_id(Path::new(r"D:\")), "local-d");
+        assert_eq!(default_local_id(Path::new(r"\\?\E:\Media")), "local-e");
+        let usb = PathBuf::from("/media/My USB");
+        assert_eq!(default_local_id(&usb), "local-my-usb");
+        assert_eq!(default_local_id(Path::new("/")), "local-root");
+    }
+}

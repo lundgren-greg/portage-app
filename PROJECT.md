@@ -7,11 +7,11 @@
 |-------|--------|
 | **Local path** | `C:\Repos\portage-app` |
 | **GitHub** | `lundgren-greg/portage-app` |
-| **Branch** | `feat/pr3-catalog-sqlite` (tracks `origin`) |
-| **Last commit** | `a6937fb` feat(catalog): SQLite WAL schema, migrations, file/blob/replica queries |
+| **Branch** | `lundgren-greg/pr4-local-provider` (tracks `origin`) |
+| **Last commit** | see `git log` on `lundgren-greg/pr4-local-provider` (PR 4 commits on top of `9e46143`) |
 | **Remote** | `origin` → https://github.com/lundgren-greg/portage-app.git |
-| **Status** | **Paused 2026-08-17.** PRs 1, 1.5, 2 and Dependabot #10/#11 are on `main`. PR 3 is implemented and open as [#12](https://github.com/lundgren-greg/portage-app/pull/12). Do not start PR 4 until #12 merges. |
-| **Updated** | 2026-08-17 |
+| **Status** | **PR 4 implemented on `lundgren-greg/pr4-local-provider` (2026-10-18), not yet merged.** Supersedes Copilot's empty draft #13. PRs 1, 1.5, 2, 3 (#12) and #14 are on `main`. |
+| **Updated** | 2026-10-18 |
 
 ---
 
@@ -33,14 +33,17 @@ Ship a Windows-first tool (`portage` CLI, then `portage-tui`, plus `portage ask`
 8. **PR 2 merged:** `portage-core` ids (BLAKE3 `ContentId`, typed ids), streaming `MultiHasher` (BLAKE3+MD5/SHA1/SHA256, 1 MiB buffer), `QuickHash` 64 KiB prefilter, `paths::ensure_inside` (traversal/ADS/symlink containment). QuickXor deferred to PR 8.
 9. Dependabot CI bumps merged: `actions/cache` v6 (#10), `actions/checkout` v7 (#11).
 10. **PR 3 implemented and opened** as [#12](https://github.com/lundgren-greg/portage-app/pull/12) on `feat/pr3-catalog-sqlite` (`a6937fb`). SQLite WAL catalog (`migrations/0001` + `0002`), exclusive/shared `portage.lock`, proto-blob on file insert, lookup by path and `ContentId`, capacity snapshots, `portage doctor` + `--backup`. Local `cargo test --workspace`, clippy, and llvm-cov (~85% lines) were green; CI on #12 was still running when we paused.
-11. **Paused** (user request). Leftover *uncommitted* local files are not part of #12: `.agents/skills/next-pr/`, `.cursor/`, `.grok/`, `CLAUDE.md`, plus dirty `AGENTS.md` / copilot-instructions / skills README / `How-we-work.md` (next-pr skill wiring). Leave them unless a later session wants that as its own PR.
+11. ~~Paused~~ (2026-08-17; resolved: #12 and the next-pr skill (#14) merged). Leftover *uncommitted* local files are not part of #12: `.agents/skills/next-pr/`, `.cursor/`, `.grok/`, `CLAUDE.md`, plus dirty `AGENTS.md` / copilot-instructions / skills README / `How-we-work.md` (next-pr skill wiring). Leave them unless a later session wants that as its own PR.
+
+12. **PR 4 implemented** on `lundgren-greg/pr4-local-provider` (supersedes Copilot draft #13, which was empty). `Provider` trait (read side), local volume provider (fixed + removable/USB), K6 overlay detectors (OneDrive `UserFolder`; DriveFS `DefaultMountPoint` / `Share` / `SyncTargets` / profile paths; always `%LOCALAPPDATA%\Google\DriveFS`) over injectable registry/env readers, placeholder classification from attributes only, `VolumeOffline`, metadata-only `index`, `provider add local`, `capacity`, doctor overlay audit. Not yet opened as a PR.
 
 ---
 
 ## Next steps (ordered)
 
-1. Resume: check CI on [#12](https://github.com/lundgren-greg/portage-app/pull/12), merge if green. Then **PR 4** — local provider: volumes (including USB), overlay roots, placeholders, walk. Do not start PR 4 on this pause.
-2. Follow PRs 5–13 exactly as written. **No-data-loss P0** (apply + undo refuse) before TUI/NL. Merge gates for planner PRs: P-space and P-last-copy tests. Every PR: unit tests + ≥1 integration test per touched boundary.
+1. Open the PR for `lundgren-greg/pr4-local-provider` (supersedes #13; close #13), get CI green on windows + ubuntu + coverage, run `pr-review-loop`, merge.
+2. Then **PR 5** — incremental BLAKE3 of `LocalFull` files and duplicate groups. It builds on `files.ntfs_file_id + size + mtime` and `Catalog::upsert_scanned_files` from PR 4. **PR 5 must also reconcile re-scans** (deferred from PR 4 review, Copilot on #15): after a *complete* scan (`ScanStatus::Ok`, zero unreadable subtrees), rows of that location whose `last_scan_id` is older (deleted / renamed files, paths newly inside an overlay) must stop counting as replicas before any hash flips a replica to `verified`. Unreadable subtrees are not confirmed deletions. Add deletion and newly-excluded-overlay re-scan tests. Safe to defer only because PR 4 replicas are all `suspect` / `partial` and never count toward last-copy.
+3. Follow PRs 6–13 exactly as written. **No-data-loss P0** (apply + undo refuse) before TUI/NL. Merge gates for planner PRs: P-space and P-last-copy tests. Every PR: unit tests + ≥1 integration test per touched boundary.
 4. PR 14 polish → PR 15 `portage-tui` → PR 16 `portage ask` (clarify-then-plan agent, local or online).
 5. Keep this file's **Stopped at** current.
 
@@ -88,8 +91,10 @@ portage-app/
   configs/examples/gaming-clips.yaml
   .github/workflows/ci.yml   # build/test/clippy/fmt matrix + coverage gate
   crates/portage-core/       # error, units, obs, ids, hash, paths, DataPaths
-  crates/portage-catalog/    # SQLite WAL, lock, files/blobs/replicas, doctor
-  crates/portage-{auth,providers,media,engine,sim}/  # stubs
+  crates/portage-catalog/    # SQLite WAL, lock, files/blobs/replicas, overlay_roots, re-scan upsert, doctor
+  crates/portage-providers/  # Provider trait, local volumes, K6 sync-root detectors, placeholders, registry
+  crates/portage-engine/     # index.rs: metadata-only local index, last-copy predicate, capacity snapshots
+  crates/portage-{auth,media,sim}/  # stubs
   migrations/0001_init.sql + 0002_plans_journal.sql
 ```
 
@@ -101,6 +106,9 @@ cargo run -p portage-cli -- --help
 cargo run -p portage-cli -- init
 cargo run -p portage-cli -- status --format=prom
 cargo run -p portage-cli -- doctor
+cargo run -p portage-cli -- provider add local --root E:\ --id ext-media --role both
+cargo run -p portage-cli -- index
+cargo run -p portage-cli -- capacity
 cargo test --workspace
 ```
 
@@ -113,8 +121,9 @@ cargo test --workspace
 | ~~PR 1 workspace + CLI stub~~ | Merged (#5) |
 | ~~PR 1.5 observability~~ | Merged (#7) |
 | ~~PR 2 core ids/hash/paths~~ | Merged (#8) |
-| PR 3 catalog | Open as [#12](https://github.com/lundgren-greg/portage-app/pull/12) — paused before merge |
-| PR 4–5 local inventory | Walk + incremental hash; useful on D: of clips before any cloud |
+| ~~PR 3 catalog~~ | Merged (#12) |
+| PR 4 local walk | Implemented on `lundgren-greg/pr4-local-provider`; PR not yet open |
+| PR 5 local hash + dups | Incremental BLAKE3; useful on D: of clips before any cloud |
 | PR 6–8 Drive + OneDrive read | Unified inventory, still no mutations |
 | PR 9–10 planner dry-run | 4 GiB fixture, no writes |
 | PR 11–13 confirmed apply + undo | First real transfers; P0 no-data-loss gate |
@@ -142,6 +151,8 @@ cargo test --workspace
 | 2026-08-15 | NL is a **clarify-then-plan agent** (desire + priority, ≤3 clarify rounds), **local or online**: Grok default, any OpenAI-compatible localhost (Ollama/LM Studio). Online sees a redacted catalog digest unless `nl.send_paths`. Source: `docs/brainstorm.md`. |
 | 2026-08-15 | Observability: structured **JSON-lines logs** + **Prometheus-text metrics snapshot**, local files only (Grafana Alloy/Loki/textfile-collector friendly). No listener, no push, no telemetry. New **PR 1.5**. |
 | 2026-08-15 | Testing: CI `cargo llvm-cov` gate ≥80% on core/catalog/engine; every PR ships unit tests + ≥1 integration test per touched boundary; redaction tests merge-blocking. |
+| 2026-10-18 | PR 4: `Provider` is synchronous for now (local FS only); becomes async with the HTTP providers (PR 6+). `windows-sys` is used for Win32 calls. Local `locations.id` = `<provider>@<volume serial>`; paths are provider-root-relative. Overlapping local roots on one volume are refused. Placeholders keep PR 3's `partial` replica (never last-copy). `doctor` fails on a fresh catalog when OneDrive/DriveFS is installed until `provider add local` / `index` registers overlays. |
+| 2026-10-18 | PR 4 review round 2: the local walk is a hand-rolled depth-first walk (not `walkdir`, which opens a directory before yielding it) so overlay / placeholder / link / other-filesystem checks run before `read_dir`. A local provider id is bound to one volume serial and one volume-relative root; re-add may change roles or follow a drive-letter move only. Every CLI command runs `checked_data_dir` (resolved, canonicalized, K6-checked) before creating anything in the data dir. |
 | 2026-08-15 | **Dedupe semantics (user):** consolidating duplicates across providers = one verified copy at the desired destination, evict redundant **local/USB** replicas in R1. Deleting the redundant **cloud** copy stays **R2** (`--allow-cloud-delete`, last-copy gated). |
 
 ---

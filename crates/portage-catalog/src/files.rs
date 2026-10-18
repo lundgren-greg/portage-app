@@ -134,6 +134,46 @@ impl Catalog {
         Ok(out)
     }
 
+    /// Upsert files seen by a scan, in one transaction. Returns each file id
+    /// in input order.
+    ///
+    /// New paths insert like [`Catalog::insert_file`]. A path whose
+    /// `(kind, size, mtime, ntfs_file_id, hydration)` is unchanged only gets
+    /// `last_scan_id` / `parent_id` refreshed. A changed byte file gets a fresh
+    /// proto-blob and its replica is reset to `Suspect` (`Partial` for a
+    /// placeholder) — a changed file is never still `Verified`.
+    pub fn upsert_scanned_files(&self, files: &[NewFile]) -> Result<Vec<i64>, Error> {
+        let tx = self.conn().unchecked_transaction().map_err(map_sql)?;
+        let mut out = Vec::with_capacity(files.len());
+        for f in files {
+            out.push(upsert_scanned_in(&tx, f)?);
+        }
+        tx.commit().map_err(map_sql)?;
+        Ok(out)
+    }
+
+    /// Every file row of a location, ordered by path.
+    pub fn files_for_location(&self, location_id: &str) -> Result<Vec<FileRow>, Error> {
+        let mut stmt = self
+            .conn()
+            .prepare(
+                "SELECT id, location_id, parent_id, path, name, kind, shortcut_target_ref,
+                        size, mtime_utc, ntfs_file_id, volume_serial, mime, hydration,
+                        remote_ref, last_scan_id
+                 FROM files WHERE location_id = ?1 ORDER BY path",
+            )
+            .map_err(map_sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![location_id], map_file_row)
+            .map_err(map_sql)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_sql)
+    }
+
+    /// The replica attached to a file, if any.
+    pub fn replica_for_file(&self, file_id: i64) -> Result<Option<ReplicaRow>, Error> {
+        replicas::for_file(self.conn(), file_id)
+    }
+
     /// Insert a provider checksum binding.
     pub fn insert_checksum(&self, row: &NewChecksum) -> Result<(), Error> {
         self.conn()
@@ -232,6 +272,96 @@ fn insert_file_in(tx: &rusqlite::Transaction<'_>, new: &NewFile) -> Result<Inser
         blob,
         replica,
     })
+}
+
+fn upsert_scanned_in(tx: &rusqlite::Transaction<'_>, new: &NewFile) -> Result<i64, Error> {
+    type Existing = (
+        i64,
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+    );
+    let existing: Option<Existing> = tx
+        .query_row(
+            "SELECT id, kind, size, mtime_utc, ntfs_file_id, hydration
+             FROM files WHERE location_id = ?1 AND path = ?2",
+            rusqlite::params![new.location_id, new.path],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sql)?;
+    let Some((id, kind, size, mtime, file_id, hydration)) = existing else {
+        return Ok(insert_file_in(tx, new)?.file.id);
+    };
+    let unchanged = kind == new.kind.as_str()
+        && size == new.size
+        && mtime == new.mtime_utc
+        && file_id == new.ntfs_file_id
+        && hydration == new.hydration.as_str();
+    if unchanged {
+        tx.execute(
+            "UPDATE files SET last_scan_id = ?1, parent_id = ?2 WHERE id = ?3",
+            rusqlite::params![new.last_scan_id, new.parent_id, id],
+        )
+        .map_err(map_sql)?;
+        return Ok(id);
+    }
+    validate_catalog_path(&new.path)?;
+    tx.execute(
+        "UPDATE files SET parent_id = ?1, name = ?2, kind = ?3, is_dir = ?4, size = ?5,
+            mtime_utc = ?6, ntfs_file_id = ?7, volume_serial = ?8, mime = ?9,
+            hydration = ?10, last_scan_id = ?11
+         WHERE id = ?12",
+        rusqlite::params![
+            new.parent_id,
+            new.name,
+            new.kind.as_str(),
+            new.kind.is_dir() as i64,
+            new.size,
+            new.mtime_utc,
+            new.ntfs_file_id,
+            new.volume_serial,
+            new.mime,
+            new.hydration.as_str(),
+            new.last_scan_id,
+            id,
+        ],
+    )
+    .map_err(map_sql)?;
+
+    let state = match new.hydration {
+        Hydration::Placeholder => ReplicaState::Partial,
+        _ => ReplicaState::Suspect,
+    };
+    let replica = replicas::for_file(tx, id)?;
+    match (new.kind, replica) {
+        (FileKind::Byte, existing) => {
+            let size = new.size.ok_or_else(|| {
+                Error::Invariant("byte file must have a size before inserting a proto-blob".into())
+            })?;
+            let blob = blobs::insert_proto(tx, size, new.mime.as_deref())?;
+            match existing {
+                Some(r) => replicas::reset(tx, r.id, blob.id, state)?,
+                None => {
+                    replicas::insert(tx, blob.id, id, state)?;
+                }
+            }
+        }
+        (_, Some(r)) => replicas::delete(tx, r.id)?,
+        (_, None) => {}
+    }
+    Ok(id)
 }
 
 fn map_file_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileRow> {

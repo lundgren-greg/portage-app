@@ -499,6 +499,8 @@ dependencies = [
  "fs2",
  "portage-catalog",
  "portage-core",
+ "portage-engine",
+ "portage-providers",
  "serde_json",
  "tempfile",
  "time",
@@ -527,7 +529,12 @@ dependencies = [
 name = "portage-engine"
 version = "0.1.0"
 dependencies = [
+ "portage-catalog",
  "portage-core",
+ "portage-providers",
+ "tempfile",
+ "time",
+ "tracing",
 ]
 
 [[package]]
@@ -541,7 +548,13 @@ dependencies = [
 name = "portage-providers"
 version = "0.1.0"
 dependencies = [
+ "fs2",
+ "libc",
+ "portage-catalog",
  "portage-core",
+ "serde_json",
+ "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

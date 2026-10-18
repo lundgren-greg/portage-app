@@ -4,7 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Index, policy, planner, and executor for Portage (stub until PR 4+)"
+description = "Index, policy, planner, and executor for Portage"
 
 [dependencies]
+portage-catalog = { path = "../portage-catalog" }
 portage-core = { path = "../portage-core" }
+portage-providers = { path = "../portage-providers" }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

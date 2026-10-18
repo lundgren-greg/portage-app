@@ -1,7 +1,8 @@
-//! Index, policy, planner, and executor for Portage (stub until PR 4+).
+//! Index, policy, planner, and executor for Portage.
 //!
-//! Intentionally empty in PR 1. Implementation lands in PR 4
-//! per the PR Plan in `docs/design.md`. Do not add logic here early.
+//! PR 4: local metadata index ([`index`]). Hashing is PR 5; policy, planner,
+//! and executor follow the PR Plan in `docs/design.md`.
 
-// Re-exported so the stub compiles with a real dependency edge to core.
+pub mod index;
+
 pub use portage_core as core;

@@ -2,6 +2,7 @@
 //!
 //! PR 1: `--help` / `init`. PR 1.5: logging, metrics, `status`.
 //! PR 3: SQLite catalog + `doctor` integrity stub.
+//! PR 4: `provider add local`, `index`, `capacity`, doctor overlay audit.
 
 mod cmd;
 
@@ -34,12 +35,27 @@ enum Command {
     /// text for a local textfile collector (no listener, no push).
     Status(cmd::status::StatusArgs),
 
-    /// Check catalog integrity (and optionally back up catalog.sqlite).
+    /// Check catalog integrity and cloud-overlay safety (and optionally back
+    /// up catalog.sqlite).
     ///
-    /// Overlay, token, and journal audits arrive in later PRs. This stub
-    /// opens the catalog, runs SQLite integrity + foreign-key checks, and
-    /// with --backup copies a checkpointed catalog next to the live file.
+    /// Runs SQLite integrity + foreign-key checks, then fails if OneDrive or
+    /// Google Drive for desktop is installed but no overlay roots are
+    /// registered, or if a local root is itself an overlay. With --backup
+    /// copies a checkpointed catalog next to the live file. Token and journal
+    /// audits arrive in later PRs.
     Doctor(cmd::doctor::DoctorArgs),
+
+    /// Manage storage providers (PR 4: local volumes, including USB).
+    Provider(cmd::provider::ProviderArgs),
+
+    /// Inventory local providers into the catalog (metadata only).
+    ///
+    /// Never reads file contents and never opens cloud placeholders; sync
+    /// roots inside a root are skipped. An unplugged volume fails closed.
+    Index(cmd::index::IndexArgs),
+
+    /// Show free space per local volume (internal and removable separately).
+    Capacity(cmd::capacity::CapacityArgs),
 }
 
 fn main() -> std::process::ExitCode {
@@ -48,6 +64,9 @@ fn main() -> std::process::ExitCode {
         Command::Init(args) => cmd::init::run(&args, cli.verbose),
         Command::Status(args) => cmd::status::run(&args, cli.verbose),
         Command::Doctor(args) => cmd::doctor::run(&args, cli.verbose),
+        Command::Provider(args) => cmd::provider::run(&args, cli.verbose),
+        Command::Index(args) => cmd::index::run(&args, cli.verbose),
+        Command::Capacity(args) => cmd::capacity::run(&args, cli.verbose),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

@@ -3,16 +3,20 @@
 //! Design (`docs/design.md`, UX table + K22): measure the system drive's free
 //! space. If it is below 8 GiB, *recommend* the largest other volume (e.g.
 //! `D:\PortageData`) and stop — never relocate silently. Reject a chosen
-//! `--data-dir` whose volume has less than 8 GiB free. Overlay / Cloud Filter
-//! detection arrives in PR 4; PR 1 gates on free space only.
+//! `--data-dir` whose volume has less than 8 GiB free, or that is inside a
+//! OneDrive / DriveFS overlay (K6 detectors, PR 4).
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Args;
+use portage_catalog::Hydration;
 use portage_core::units::GIB;
 use portage_core::ByteSize;
+use portage_providers::local::pathcmp::{path_str, strip_verbatim, HOST_CASE_INSENSITIVE};
+use portage_providers::local::{check_root, placeholder, volume};
+use portage_providers::HostOverlays;
 
 /// Minimum free space on the volume that hosts the catalog.
 pub const MIN_DATA_DIR_FREE: u64 = 8 * GIB;
@@ -93,8 +97,63 @@ pub fn run(args: &InitArgs, verbose: bool) -> Result<()> {
     }
 }
 
+/// The data dir for a command (`--data-dir` or the default), checked by
+/// [`guard_data_dir`] against this host's overlays. Every command calls this
+/// before it creates logs, the lock, or the catalog.
+pub fn checked_data_dir(arg: Option<&Path>) -> Result<PathBuf> {
+    let dir = match arg {
+        Some(p) => p.to_path_buf(),
+        None => default_data_dir()?,
+    };
+    guard_data_dir(&dir, &HostOverlays::detect())
+}
+
+/// K6 / K22 gate for a data dir that may not exist yet. Makes `dir`
+/// absolute, folds `.` / `..`, canonicalizes its deepest existing ancestor
+/// (resolving junctions and symlinks) and re-appends the missing suffix,
+/// then refuses if that real destination is (inside) an overlay, on a
+/// DriveFS / Cloud Filter volume, or under a placeholder directory.
+/// Creates nothing. Returns the checked path, which callers must use.
+pub fn guard_data_dir(dir: &Path, host: &HostOverlays) -> Result<PathBuf> {
+    let refuse =
+        |why: &dyn std::fmt::Display| anyhow!("refusing data_dir {}: {why}", dir.display());
+    let ci = HOST_CASE_INSENSITIVE;
+    let mut abs = PathBuf::new();
+    for c in std::path::absolute(dir)
+        .map_err(|e| refuse(&e))?
+        .components()
+    {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                abs.pop();
+            }
+            other => abs.push(other),
+        }
+    }
+    let lexical = |p: &Path| check_root(&path_str(p), &host.roots, None, Hydration::LocalFull, ci);
+    lexical(&abs).map_err(|e| refuse(&e))?;
+
+    let ancestor = existing_ancestor(&abs);
+    let suffix = abs.strip_prefix(ancestor).map_err(|e| refuse(&e))?;
+    let real_ancestor = strip_verbatim(ancestor.canonicalize().map_err(|e| refuse(&e))?);
+    let real = real_ancestor.join(suffix);
+    let meta = fs::symlink_metadata(&real_ancestor).map_err(|e| refuse(&e))?;
+    let volume = volume::probe(&real_ancestor).map_err(|e| refuse(&e))?;
+    check_root(
+        &path_str(&real),
+        &host.roots,
+        Some(&volume),
+        placeholder::hydration_of(&meta),
+        ci,
+    )
+    .map_err(|e| refuse(&e))?;
+    Ok(real)
+}
+
 /// Create the data dir, lock file, and config at an explicit location.
 fn init_at(dir: &Path, verbose: bool) -> Result<()> {
+    let dir = &checked_data_dir(Some(dir))?;
     let free = volume_free(dir)?;
     if free.bytes() < MIN_DATA_DIR_FREE {
         bail!(
@@ -223,6 +282,7 @@ fn other_volumes() -> Vec<Volume> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use portage_providers::local::sync_roots::{Detector, OverlayRoot};
 
     fn vol(root: &str, free_gib: u64) -> Volume {
         Volume {
@@ -264,6 +324,56 @@ mod tests {
     fn boundary_exactly_8_gib_is_enough() {
         let system = vol("C:\\", 8);
         assert_eq!(recommend(&system, &[]), Recommendation::UseDefault);
+    }
+
+    /// Host whose only overlay is `<tmp>/OneDrive` (canonical).
+    fn host_with_overlay(tmp: &Path) -> (PathBuf, HostOverlays) {
+        let overlay = strip_verbatim(tmp.canonicalize().unwrap()).join("OneDrive");
+        fs::create_dir_all(&overlay).unwrap();
+        let host = HostOverlays {
+            roots: vec![OverlayRoot {
+                path: overlay.clone(),
+                provider_id: "overlay:onedrive".into(),
+                detector: Detector::OnedriveUserfolder,
+            }],
+            ..HostOverlays::default()
+        };
+        (overlay, host)
+    }
+
+    #[test]
+    fn data_dir_guard_resolves_dots_and_links_before_checking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (overlay, host) = host_with_overlay(tmp.path());
+        fs::create_dir_all(tmp.path().join("other")).unwrap();
+
+        let ok = guard_data_dir(&tmp.path().join("fine").join("Portage"), &host).unwrap();
+        assert!(ok.is_absolute() && ok.ends_with("fine/Portage"), "{ok:?}");
+        assert!(!tmp.path().join("fine").exists(), "nothing is created");
+
+        for bad in [
+            overlay.join("Portage"),
+            tmp.path().join("other/../OneDrive/Portage"),
+            tmp.path().join("missing/../OneDrive/x"),
+        ] {
+            assert!(guard_data_dir(&bad, &host).is_err(), "{bad:?}");
+        }
+
+        // An alias (junction / symlink) into the overlay is the overlay.
+        let alias = tmp.path().join("alias");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&overlay, &alias).is_ok();
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&alias)
+            .arg(&overlay)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if made {
+            assert!(guard_data_dir(&alias.join("Portage"), &host).is_err());
+            assert!(guard_data_dir(&alias, &host).is_err());
+        }
     }
 
     #[test]

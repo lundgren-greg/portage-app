@@ -37,10 +37,7 @@ pub struct StatusArgs {
 
 /// Run `portage status`.
 pub fn run(args: &StatusArgs, verbose: bool) -> Result<()> {
-    let data_dir = match &args.data_dir {
-        Some(dir) => dir.clone(),
-        None => init::default_data_dir()?,
-    };
+    let data_dir = init::checked_data_dir(args.data_dir.as_deref())?;
     if !data_dir.join("portage.lock").exists() {
         bail!(
             "{} is not a Portage data dir (no portage.lock); run: portage init",
