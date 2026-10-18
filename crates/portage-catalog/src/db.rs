@@ -121,6 +121,16 @@ impl Catalog {
         &self.conn
     }
 
+    /// Run `f` in one transaction: all of its writes commit, or none do.
+    /// `f` must not call a method that opens its own transaction
+    /// (`insert_file`, `insert_files`, `upsert_scanned_files`).
+    pub fn atomically<T>(&self, f: impl FnOnce(&Self) -> Result<T, Error>) -> Result<T, Error> {
+        let tx = self.conn.unchecked_transaction().map_err(map_sql)?;
+        let out = f(self)?;
+        tx.commit().map_err(map_sql)?;
+        Ok(out)
+    }
+
     /// Row counts for doctor / tests.
     pub fn counts(&self) -> Result<CatalogCounts, Error> {
         Ok(CatalogCounts {

@@ -7,8 +7,9 @@ use portage_catalog::{Catalog, LocationKind, ProviderKind};
 use portage_core::ids::ProviderId;
 use portage_core::Error;
 
-use crate::local::pathcmp::{is_within, path_str, HOST_CASE_INSENSITIVE};
+use crate::local::pathcmp::{is_within, path_str, same_path, HOST_CASE_INSENSITIVE};
 use crate::local::sync_roots::OverlayRoot;
+use crate::local::volume::rebase_root;
 use crate::traits::Provider;
 
 use crate::local::{
@@ -68,17 +69,22 @@ pub fn add_local(
     host: &HostOverlays,
 ) -> Result<LocalProvider, Error> {
     validate_provider_id(id)?;
-    if let Some(existing) = cat.provider(id)? {
-        if existing.kind != ProviderKind::Local {
+    let existing = match cat.provider(id)? {
+        Some(row) if row.kind != ProviderKind::Local => {
             return Err(Error::ProviderConfig(format!(
                 "provider {id} already exists as {}",
-                existing.kind
-            )));
+                row.kind
+            )))
         }
-    }
+        Some(row) => Some(LocalConfig::from_json(&row.config_json)?),
+        None => None,
+    };
     // Register overlays first: even a refused add leaves doctor informed.
     register_overlays(cat, &host.roots)?;
     let config = prepare_local(root, role, host)?;
+    if let Some(old) = &existing {
+        check_same_tree(id, old, &config)?;
+    }
 
     for other in load_local_all(cat, host)? {
         if other.id().as_str() == id {
@@ -105,15 +111,46 @@ pub fn add_local(
     Ok(LocalProvider::new(ProviderId::new(id), config, roots))
 }
 
+/// Re-adding an id may change its roles or follow a drive-letter change, but
+/// not point it at another tree: the location id (`<id>@<serial>`) and every
+/// root-relative row under it would silently describe different files.
+fn check_same_tree(id: &str, old: &LocalConfig, new: &LocalConfig) -> Result<(), Error> {
+    if !old.volume_serial.eq_ignore_ascii_case(&new.volume_serial) {
+        return Err(Error::ProviderConfig(format!(
+            "provider {id} is recorded on volume {} but {} is on volume {}; \
+             use a new provider id for a different disk",
+            old.volume_serial,
+            new.root.display(),
+            new.volume_serial
+        )));
+    }
+    let ci = HOST_CASE_INSENSITIVE;
+    let same = rebase_root(&old.root, &old.volume_mount, &new.volume_mount)
+        .is_some_and(|r| same_path(&path_str(&r), &path_str(&new.root), ci));
+    if !same {
+        return Err(Error::ProviderConfig(format!(
+            "provider {id} has root {}; refusing to retarget it to {} \
+             (use a new provider id for a different directory)",
+            old.root.display(),
+            new.root.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Provider config and its location row, in one transaction: a failed
+/// location write leaves the previous config in place.
 fn save_local(cat: &Catalog, id: &str, config: &LocalConfig) -> Result<(), Error> {
-    cat.upsert_provider_config(id, ProviderKind::Local, None, &config.to_json())?;
-    cat.upsert_location(
-        &location_id(id, &config.volume_serial),
-        id,
-        LocationKind::Volume,
-        Some(&config.volume_label),
-        Some(&path_str(&config.root)),
-    )
+    cat.atomically(|cat| {
+        cat.upsert_provider_config(id, ProviderKind::Local, None, &config.to_json())?;
+        cat.upsert_location(
+            &location_id(id, &config.volume_serial),
+            id,
+            LocationKind::Volume,
+            Some(&config.volume_label),
+            Some(&path_str(&config.root)),
+        )
+    })
 }
 
 /// Persist a drive-letter change found by [`LocalProvider::resolve`].

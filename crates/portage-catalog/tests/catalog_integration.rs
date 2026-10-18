@@ -202,3 +202,31 @@ fn batched_insert_and_schema_flags() {
     assert!(cat.plans_schema_ready().unwrap());
     assert!(cat.journal_schema_ready().unwrap());
 }
+
+#[test]
+fn atomically_rolls_back_every_write_on_error() {
+    let (_tmp, cat) = exclusive();
+    seed(&cat);
+    let failed: Result<(), Error> = cat.atomically(|c| {
+        c.upsert_provider_config("local-d", ProviderKind::Local, None, r#"{"changed":1}"#)?;
+        // Same (provider_id, root) under a new location id: UNIQUE violation.
+        c.upsert_location(
+            "vol-d2",
+            "local-d",
+            LocationKind::Volume,
+            None,
+            Some("D:\\"),
+        )
+    });
+    assert!(failed.is_err());
+    assert_eq!(cat.provider("local-d").unwrap().unwrap().config_json, "{}");
+
+    cat.atomically(|c| {
+        c.upsert_provider_config("local-d", ProviderKind::Local, None, "{\"ok\":1}")
+    })
+    .unwrap();
+    assert_eq!(
+        cat.provider("local-d").unwrap().unwrap().config_json,
+        "{\"ok\":1}"
+    );
+}

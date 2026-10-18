@@ -229,3 +229,58 @@ fn open_read_refuses_overlays_links_and_other_disks() {
         Err(Error::VolumeOffline { .. })
     ));
 }
+
+#[test]
+fn re_add_refuses_retargeting_an_id_but_allows_role_changes() {
+    let files = tree();
+    let host = HostOverlays::default();
+    let (_db, cat) = catalog();
+    let first = add_local(&cat, "media", &files.path().join("clips"), None, &host).unwrap();
+    let before = cat.provider("media").unwrap().unwrap().config_json;
+
+    // Same volume, different directory: old root-relative rows would point
+    // into the new tree under the same location id.
+    match add_local(&cat, "media", files.path(), None, &host) {
+        Err(Error::ProviderConfig(msg)) => assert!(msg.contains("root"), "{msg}"),
+        other => panic!("expected ProviderConfig, got {other:?}"),
+    }
+    assert_eq!(cat.provider("media").unwrap().unwrap().config_json, before);
+
+    // A different disk now at the same path: a new volume, not this one.
+    let mut old = first.config().clone();
+    old.volume_serial = "DEAD-BEEF".into();
+    cat.upsert_provider_config(
+        "media",
+        portage_catalog::ProviderKind::Local,
+        None,
+        &old.to_json(),
+    )
+    .unwrap();
+    let recorded = cat.provider("media").unwrap().unwrap().config_json;
+    match add_local(&cat, "media", &files.path().join("clips"), None, &host) {
+        Err(Error::ProviderConfig(msg)) => assert!(msg.contains("volume"), "{msg}"),
+        other => panic!("expected ProviderConfig, got {other:?}"),
+    }
+    assert_eq!(
+        cat.provider("media").unwrap().unwrap().config_json,
+        recorded
+    );
+
+    // Restore the real serial: a role update at the same root is fine.
+    cat.upsert_provider_config(
+        "media",
+        portage_catalog::ProviderKind::Local,
+        None,
+        &first.config().to_json(),
+    )
+    .unwrap();
+    let p = add_local(
+        &cat,
+        "media",
+        &files.path().join("clips"),
+        Some(Role::Shuttle),
+        &host,
+    )
+    .unwrap();
+    assert_eq!(p.config().roles, Role::Shuttle);
+}
