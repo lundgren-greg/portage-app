@@ -3,8 +3,8 @@
 //! Design (`docs/design.md`, UX table + K22): measure the system drive's free
 //! space. If it is below 8 GiB, *recommend* the largest other volume (e.g.
 //! `D:\PortageData`) and stop — never relocate silently. Reject a chosen
-//! `--data-dir` whose volume has less than 8 GiB free. Overlay / Cloud Filter
-//! detection arrives in PR 4; PR 1 gates on free space only.
+//! `--data-dir` whose volume has less than 8 GiB free, or that is inside a
+//! OneDrive / DriveFS overlay (K6 detectors, PR 4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,6 +95,16 @@ pub fn run(args: &InitArgs, verbose: bool) -> Result<()> {
 
 /// Create the data dir, lock file, and config at an explicit location.
 fn init_at(dir: &Path, verbose: bool) -> Result<()> {
+    let host = portage_providers::HostOverlays::detect();
+    if let Err(err) = portage_providers::local::check_root(
+        &dir.to_string_lossy(),
+        &host.roots,
+        None,
+        portage_catalog::Hydration::LocalFull,
+        portage_providers::local::pathcmp::HOST_CASE_INSENSITIVE,
+    ) {
+        bail!("refusing data_dir {}: {err}", dir.display());
+    }
     let free = volume_free(dir)?;
     if free.bytes() < MIN_DATA_DIR_FREE {
         bail!(

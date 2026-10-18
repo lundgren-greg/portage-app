@@ -499,6 +499,8 @@ dependencies = [
  "fs2",
  "portage-catalog",
  "portage-core",
+ "portage-engine",
+ "portage-providers",
  "serde_json",
  "tempfile",
  "time",
